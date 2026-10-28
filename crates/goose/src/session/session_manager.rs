@@ -1,11 +1,8 @@
-use crate::agents::Container;
 use crate::config::paths::Paths;
-use crate::config::ExtensionConfig;
 use crate::config::GooseMode;
 use crate::conversation::message::{Message, MessageMetadata, MessageUsage, TokenState};
 use crate::conversation::Conversation;
-use crate::providers::base::CostSource;
-use crate::providers::base::Provider;
+use crate::providers::base::{CostSource, Provider};
 use crate::recipe::validate_recipe::strip_unreferenced_parameters;
 use crate::recipe::Recipe;
 use crate::session::export_markdown::export_session_to_markdown;
@@ -16,6 +13,8 @@ use crate::session::session_naming::{
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use futures::TryStreamExt;
+use goose_agent::container::Container;
+use goose_agent::extension::ExtensionConfig;
 use goose_providers::conversation::token_usage::Usage;
 use goose_providers::model::ModelConfig;
 use indexmap::IndexMap;
@@ -456,7 +455,7 @@ impl SessionManager {
 
     pub(crate) fn action_required(
         &self,
-    ) -> Arc<crate::action_required_manager::ActionRequiredManager> {
+    ) -> Arc<goose_agent::action_required_manager::ActionRequiredManager> {
         self.storage.action_required.clone()
     }
 
@@ -846,7 +845,7 @@ impl SessionManager {
 pub struct SessionStorage {
     pool: tokio::sync::OnceCell<Pool<Sqlite>>,
     session_dir: PathBuf,
-    action_required: Arc<crate::action_required_manager::ActionRequiredManager>,
+    action_required: Arc<goose_agent::action_required_manager::ActionRequiredManager>,
 }
 
 pub(crate) fn role_to_string(role: &Role) -> &'static str {
@@ -1106,7 +1105,9 @@ impl SessionStorage {
         Self {
             pool: tokio::sync::OnceCell::new(),
             session_dir,
-            action_required: Arc::new(crate::action_required_manager::ActionRequiredManager::new()),
+            action_required: Arc::new(
+                goose_agent::action_required_manager::ActionRequiredManager::new(),
+            ),
         }
     }
 

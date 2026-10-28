@@ -5,7 +5,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use goose_agent::pre_tool_call_hook::{PreToolCallDecision, PreToolCallHook};
 
-use crate::agents::extension_manager::ExtensionLease;
 use crate::agents::state_machine::messages_since_kickoff;
 use crate::agents::state_machine::ops_toolcalling::{
     approval_expired, call_will_not_run, leased_working_dir, tool_span,
@@ -14,6 +13,7 @@ use crate::conversation::message::ToolRequest;
 use crate::conversation::Conversation;
 use crate::hooks::{HookChainOutcome, HookContext, HookDenial, HookEvent, HookManager};
 use crate::session::Session;
+use goose_agent::extension_manager::ExtensionLease;
 
 /// Observation-only record of what the `PreToolUse` chain decided. Carries
 /// no veto: the decision has already been made by the time this runs.

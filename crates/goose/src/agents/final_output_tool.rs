@@ -1,8 +1,8 @@
 use crate::agents::state_machine::messages_since_kickoff;
-use crate::agents::tool_execution::ToolCallResult;
 use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::Conversation;
 use crate::recipe::Response;
+use goose_agent::tool_execution::ToolCallResult;
 use indoc::formatdoc;
 use rmcp::model::{
     Annotations, CallToolRequestParams, ContentBlock, ErrorCode, ErrorData, Role, TextContent,

@@ -9,7 +9,6 @@ pub use goose_sdk_types::custom_requests::{
     ContextCategory, ContextPart, ContextReportModel, ContextReportResponse, ContextSegment,
 };
 
-use crate::agents::extension_manager::get_tool_owner;
 use crate::agents::state_machine::enrich_unclaimed_tool_errors;
 use crate::agents::{PromptManager, SessionConfig, StateMachineServices};
 use crate::conversation::message::{Message, MessageContent};
@@ -21,6 +20,7 @@ use crate::providers::toolshim::{
     toolshim_system_prompt_appendix,
 };
 use crate::token_counter::{TokenCounter, TOKENS_PER_MESSAGE};
+use goose_agent::extension_manager::get_tool_owner;
 
 const MAX_PREVIEW_CHARS: usize = 2_000;
 

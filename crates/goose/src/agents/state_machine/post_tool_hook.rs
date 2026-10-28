@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use goose_agent::post_tool_call_hook::PostToolCallHook;
 use rmcp::model::{CallToolResult, ErrorData};
 
-use crate::agents::extension_manager::ExtensionLease;
 use crate::agents::state_machine::ops_toolcalling::{
     categorize_tool, emit_with_matcher, leased_working_dir, string_argument, ToolCategory,
 };
@@ -14,6 +13,7 @@ use crate::conversation::message::{ToolRequest, ToolResponse};
 use crate::conversation::Conversation;
 use crate::hooks::{HookContext, HookEvent, HookManager};
 use crate::session::Session;
+use goose_agent::extension_manager::ExtensionLease;
 
 pub struct GoosePostToolHook {
     hook_manager: HookManager,

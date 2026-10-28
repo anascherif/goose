@@ -12,9 +12,7 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ErrorData, Role, Tool, ToolAnnotations,
 };
 
-use crate::agents::extension::ExtensionInfo;
-use crate::agents::extension_manager::{CallRequest, ExtensionLease, ExtensionManager};
-use crate::agents::reply_parts::is_tool_visible_to_model;
+use crate::agents::extension_manager::ExtensionManager;
 use crate::agents::state_machine::ops_llm::{ADVERTISED_TOOLS_NOTE, LLM_OPERATION_NAME};
 use crate::agents::state_machine::ops_skills::LOAD_SKILL_TOOL_NAME;
 use crate::agents::state_machine::post_tool_hook::run_post_tool_call_hook;
@@ -22,9 +20,7 @@ use crate::agents::state_machine::{
     applied, messages_since_kickoff, not_applicable, yielded_with, ConversationEffect, Emitter,
     GooseEffect, Operation, OperationResult, SlashCommand,
 };
-use crate::agents::tool_execution::{
-    tool_stream, ToolCallResult, ToolStreamItem, CHAT_MODE_TOOL_SKIPPED_RESPONSE,
-};
+use crate::agents::tool_execution::{tool_stream, ToolStreamItem, CHAT_MODE_TOOL_SKIPPED_RESPONSE};
 use crate::agents::AgentEvent;
 use crate::config::GooseMode;
 use crate::conversation::message::{
@@ -34,6 +30,10 @@ use crate::conversation::Conversation;
 use crate::hints::load_hints::SubdirectoryHintTracker;
 use crate::hooks::{HookContext, HookEvent, HookManager};
 use crate::session::Session;
+use goose_agent::extension::ExtensionInfo;
+use goose_agent::extension_manager::{CallRequest, ExtensionLease};
+use goose_agent::tool_execution::ToolCallResult;
+use goose_agent::tool_visibility::is_tool_visible_to_model;
 
 pub(super) const EXPIRED_APPROVAL_RESPONSE: &str =
     "Tool approval expired because its extension lease is no longer available. Request the tool again.";
@@ -350,7 +350,7 @@ impl ToolExecutionOperation {
 
     async fn mcp_tools(&self, lease: &ExtensionLease) -> Vec<Tool> {
         lease
-            .tools_where(|extension| !extension.is_platform())
+            .non_platform_tools()
             .await
             .into_iter()
             .filter(is_tool_visible_to_model)
