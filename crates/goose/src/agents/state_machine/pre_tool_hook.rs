@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use crate::conversation::message::ToolRequest;
 use crate::conversation::Conversation;
 use crate::hooks::{HookChainOutcome, HookContext, HookDenial, HookEvent, HookManager};
 use crate::session::Session;
-use goose_agent::extension_manager::ExtensionLease;
+use goose_agent::extension_manager::TurnLease;
 
 /// Observation-only record of what the `PreToolUse` chain decided. Carries
 /// no veto: the decision has already been made by the time this runs.
@@ -76,14 +75,11 @@ async fn pre_tool_use_denial(
 
 pub struct GoosePreToolHook {
     hook_manager: HookManager,
-    extension_lease: Arc<Mutex<Option<Arc<ExtensionLease>>>>,
+    extension_lease: TurnLease,
 }
 
 impl GoosePreToolHook {
-    pub fn new(
-        hook_manager: HookManager,
-        extension_lease: Arc<Mutex<Option<Arc<ExtensionLease>>>>,
-    ) -> Self {
+    pub fn new(hook_manager: HookManager, extension_lease: TurnLease) -> Self {
         Self {
             hook_manager,
             extension_lease,

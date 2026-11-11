@@ -1,5 +1,5 @@
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use goose_agent::max_turns::MaxTurnsOperation;
@@ -29,7 +29,7 @@ use crate::hooks::HookManager;
 use crate::providers::base::Provider;
 use crate::session::{Session, SessionManager};
 use crate::tool_inspection::ToolInspectionManager;
-use goose_agent::extension_manager::ExtensionLease;
+use goose_agent::extension_manager::TurnLease;
 
 pub(crate) struct StateMachineConfig<'a> {
     pub(crate) provider: Arc<dyn Provider>,
@@ -42,7 +42,7 @@ pub(crate) struct StateMachineConfig<'a> {
     pub(crate) always_load_tools: Vec<String>,
     pub(crate) session_manager: Arc<SessionManager>,
     pub(crate) extension_manager: Arc<ExtensionManager>,
-    pub(crate) extension_lease: Arc<StdMutex<Option<Arc<ExtensionLease>>>>,
+    pub(crate) extension_lease: TurnLease,
     pub(crate) tool_inspection_manager: &'a ToolInspectionManager,
     pub(crate) hook_manager: HookManager,
     pub(crate) steer_queue: SteerQueue,
@@ -124,7 +124,7 @@ pub(crate) fn build_state_machine(
 
     let post_tool_call_hook: Arc<dyn PostToolCallHook<Session>> = Arc::new(GoosePostToolHook::new(
         hook_manager.clone(),
-        Arc::clone(&extension_lease),
+        extension_lease.clone(),
     ));
     let mut operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
         Arc::new(FinalOutputOperation::new(provider.clone())),
@@ -133,10 +133,10 @@ pub(crate) fn build_state_machine(
                 .with_declined_message(DECLINED_RESPONSE),
         ),
         Arc::new(PreToolCallHookOperation::new(Arc::new(
-            GoosePreToolHook::new(hook_manager.clone(), Arc::clone(&extension_lease)),
+            GoosePreToolHook::new(hook_manager.clone(), extension_lease.clone()),
         ))),
         Arc::new(SkillOperation::new(
-            Arc::clone(&extension_lease),
+            extension_lease.clone(),
             Arc::clone(&post_tool_call_hook),
         )),
         Arc::new(RecipeOperation::new(Arc::clone(&extension_manager))),
@@ -144,7 +144,7 @@ pub(crate) fn build_state_machine(
             Arc::clone(&extension_manager),
             hook_manager.clone(),
             Arc::clone(&post_tool_call_hook),
-            Arc::clone(&extension_lease),
+            extension_lease.clone(),
             defer_tools,
             always_load_tools,
         )),

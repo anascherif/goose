@@ -26,6 +26,7 @@ use serde_json::Value;
 mod builtin;
 pub mod host;
 mod lease;
+mod operation;
 mod registration;
 #[cfg(feature = "mcp-stdio")]
 mod stdio;
@@ -35,6 +36,10 @@ mod streamable_http;
 pub use lease::{
     CallRequest, ExtensionLease, ExtensionSet, LeaseId, EXTENSION_MANAGER_NAME,
     LIST_RESOURCES_TOOL_NAME, READ_RESOURCE_TOOL_NAME,
+};
+pub use operation::{
+    instructions_prompt, ExtensionOperation, LeaseResolver, PendingCall, ToolCallBatch, TurnLease,
+    EXPIRED_TOOL_REQUEST,
 };
 pub use registration::{ConnectRequest, Connector, Registration};
 

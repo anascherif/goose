@@ -242,6 +242,17 @@ missing. `BestEffort` omits failed extensions; `goose` opts into it. When two ex
 expose the same tool name, the extension selected first keeps it. A catalog failure is pinned to its lease;
 resolve a new lease to retry.
 
+Tool requests run against the lease that advertised them. `TurnLease` holds the
+lease the turn's latest inference advertised; once it is cleared (a new turn, or
+a new process), requests made under it are answered as expired rather than run
+against extensions they did not see. `ToolCallBatch` runs calls concurrently,
+forwards their MCP notifications (including those delivered just after the
+result), and collects one response message that survives cancellation.
+`ExtensionOperation` composes these into an `Operation` for hosts without an
+approval step: build one per turn with a `LeaseResolver`. `goose`'s own tool
+execution adds approvals, hooks, and chat mode on the same `TurnLease` and
+`ToolCallBatch`.
+
 The native transports and their additional dependencies are target-gated; the
 existing WebAssembly agent loop does not acquire native process/network runtime
 requirements. Runtime-private cache/placement tests move with the implementation;

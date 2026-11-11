@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -38,7 +38,7 @@ use crate::session::{Session, SessionManager};
 use crate::tool_inspection::ToolInspectionManager;
 use crate::tool_monitor::RepetitionInspector;
 use goose_agent::action_required_manager::ElicitationOutcome;
-use goose_agent::extension_manager::ExtensionLease;
+use goose_agent::extension_manager::TurnLease;
 use goose_agent::stop_hook::DEFAULT_DENY_LIMIT;
 use goose_providers::api_client::{ApiClient, AuthMethod};
 use goose_providers::errors::ProviderError;
@@ -755,7 +755,7 @@ impl StateMachineServices {
         session_config: SessionConfig,
         cancel: CancellationToken,
         steer_queue: SteerQueue,
-        extension_lease: Arc<StdMutex<Option<Arc<ExtensionLease>>>>,
+        extension_lease: TurnLease,
     ) -> StateMachine<'_, Session, GooseEffect> {
         let settings = match &self.turn_settings {
             Some(settings) => settings.clone(),

@@ -1,7 +1,7 @@
 //! Makes filesystem skills available to inference and slash commands.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -26,12 +26,12 @@ use crate::config::GooseMode;
 use crate::conversation::message::{Message, ToolResponse};
 use crate::conversation::Conversation;
 use crate::session::Session;
-use goose_agent::extension_manager::ExtensionLease;
+use goose_agent::extension_manager::TurnLease;
 
 pub(super) const LOAD_SKILL_TOOL_NAME: &str = "load_skill";
 
 pub struct SkillOperation {
-    extension_lease: Arc<StdMutex<Option<Arc<ExtensionLease>>>>,
+    extension_lease: TurnLease,
     post_tool_call_hook: Arc<dyn PostToolCallHook<Session>>,
 }
 
@@ -196,7 +196,7 @@ fn load_supporting_file(
 
 impl SkillOperation {
     pub fn new(
-        extension_lease: Arc<StdMutex<Option<Arc<ExtensionLease>>>>,
+        extension_lease: TurnLease,
         post_tool_call_hook: Arc<dyn PostToolCallHook<Session>>,
     ) -> Self {
         Self {
@@ -206,14 +206,7 @@ impl SkillOperation {
     }
 
     fn leased_session(&self, session: &Session) -> Option<Session> {
-        let lease = self
-            .extension_lease
-            .lock()
-            .expect("extension lease unavailable")
-            .clone()?;
-        if lease.scope_id() != session.id.as_str() {
-            return None;
-        }
+        let lease = self.extension_lease.for_scope(&session.id)?;
         let mut session = session.clone();
         session.working_dir = lease.working_dir()?.to_path_buf();
         Some(session)
