@@ -85,7 +85,14 @@ impl Connector for GooseConnector {
                 return Ok((def.client_factory)(context));
             }
         }
-        let mut context = request.connect_context(None, request.working_dir.clone());
+        let working_dir = if request.working_dir.as_os_str().is_empty() {
+            std::env::var("GOOSE_WORKING_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default())
+        } else {
+            request.working_dir.clone()
+        };
+        let mut context = request.connect_context(None, working_dir);
         let client: Box<dyn McpClientTrait> = match resolved {
             ExtensionConfig::Builtin { name, timeout, .. } => {
                 context.timeout = std::time::Duration::from_secs(

@@ -249,6 +249,9 @@ impl Connector for ConfigConnector {
         #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
         let working_dir = match resolved {
             ExtensionConfig::Stdio { cwd: Some(cwd), .. } => PathBuf::from(cwd),
+            _ if request.working_dir.as_os_str().is_empty() => {
+                std::env::current_dir().unwrap_or_default()
+            }
             _ => request.working_dir.clone(),
         };
         #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]

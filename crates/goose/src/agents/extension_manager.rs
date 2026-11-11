@@ -72,7 +72,6 @@ impl ExtensionManager {
         container: Option<crate::container::Container>,
     ) -> Result<goose_agent::extension_manager::ExtensionSet> {
         crate::agents::extension_config::check_unique_keys(&configs)?;
-        let cwd = cwd.or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from));
         Ok(goose_agent::extension_manager::ExtensionSet::new(
             scope,
             cwd,

@@ -124,9 +124,7 @@ impl Placement {
     }
 
     fn working_dir(working_dir: Option<&Path>) -> PathBuf {
-        working_dir
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        working_dir.map(Path::to_path_buf).unwrap_or_default()
     }
 }
 
