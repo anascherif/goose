@@ -1,10 +1,14 @@
 use super::*;
 use crate::extension::check_unique_keys;
-use crate::extension_manager::host::{ExtensionAuth, PlatformExtension, StaticOAuthClientConfig};
+use crate::extension_manager::host::PlatformExtension;
+#[cfg(feature = "mcp-http")]
+use crate::extension_manager::host::{ExtensionAuth, StaticOAuthClientConfig};
 use crate::tool_execution::ToolCallContext;
 use async_trait::async_trait;
 use rmcp::model::{InitializeResult, JsonObject, ListToolsResult};
+#[cfg(feature = "mcp-http")]
 use rmcp::transport::auth::{CredentialStore, InMemoryCredentialStore};
+#[cfg(feature = "mcp-http")]
 use rmcp::transport::AuthorizationManager;
 use rmcp::ServiceError as Error;
 use std::sync::atomic::AtomicUsize;
@@ -69,6 +73,7 @@ impl ExtensionHost for TestHost {
     fn action_required(&self) -> Arc<ActionRequiredManager> {
         Arc::clone(&self.action_required)
     }
+    #[cfg(feature = "mcp-http")]
     fn auth(&self) -> Arc<dyn ExtensionAuth> {
         Arc::new(NoAuth)
     }
@@ -80,8 +85,10 @@ impl ExtensionHost for TestHost {
     }
 }
 
+#[cfg(feature = "mcp-http")]
 struct NoAuth;
 
+#[cfg(feature = "mcp-http")]
 #[async_trait]
 impl ExtensionAuth for NoAuth {
     fn credential_store(&self, _name: &str) -> Box<dyn CredentialStore> {
@@ -420,13 +427,16 @@ async fn minimal_host_defaults_reject_runtime_changes_and_authorization() {
     assert!(host.disable("scope", "server").await.is_err());
     assert!(host.extension_by_name("server").is_none());
     assert_eq!(host.resolve_config(config.clone()).await.unwrap(), config);
-    let error = host
-        .auth()
-        .authorize("https://example.com/mcp", "server", None, None)
-        .await
-        .err()
-        .expect("authorization is unavailable");
-    assert!(error.to_string().contains("requires authorization"));
+    #[cfg(feature = "mcp-http")]
+    {
+        let error = host
+            .auth()
+            .authorize("https://example.com/mcp", "server", None, None)
+            .await
+            .err()
+            .expect("authorization is unavailable");
+        assert!(error.to_string().contains("requires authorization"));
+    }
 }
 
 /// Lists fixed tools, or fails discovery when `tools` is `None`.

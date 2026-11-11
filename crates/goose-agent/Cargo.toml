@@ -73,8 +73,6 @@ url.workspace = true
 blake3 = "1.8.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-# Unit tests cover every transport.
-goose-agent = { path = ".", features = ["mcp-stdio", "mcp-http", "extension-malware-check"] }
 serial_test.workspace = true
 tempfile.workspace = true
 test-case.workspace = true
