@@ -27,7 +27,9 @@ use serde_json::Value;
 mod builtin;
 pub mod host;
 mod lease;
+#[cfg(feature = "mcp-stdio")]
 mod stdio;
+#[cfg(feature = "mcp-http")]
 mod streamable_http;
 
 pub use lease::{
@@ -394,6 +396,7 @@ impl ClientContext {
             && a.mcpui == b.mcpui
             && a.host_info == b.host_info
             && a.protocol_version == b.protocol_version
+            && a.action_required_elicitation == b.action_required_elicitation
             && match (&a.elicitation_handler, &b.elicitation_handler) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                 (None, None) => true,
@@ -609,6 +612,13 @@ fn insert_trusted_tool_update_meta(
     result.meta = Some(MetaObject(meta_map));
 }
 
+#[cfg(not(all(feature = "mcp-stdio", feature = "mcp-http")))]
+fn transport_disabled(kind: &str, feature: &str) -> ExtensionError {
+    ExtensionError::ConfigError(format!(
+        "{kind} extensions require goose-agent's `{feature}` feature"
+    ))
+}
+
 impl ExtensionManager {
     pub fn with_host(host: Arc<dyn ExtensionHost>, default_client: ClientContext) -> Self {
         Self {
@@ -790,6 +800,7 @@ impl ExtensionManager {
         };
 
         let mcp_client: Box<dyn McpClientTrait> = match &resolved_config {
+            #[cfg(feature = "mcp-http")]
             ExtensionConfig::StreamableHttp {
                 uri,
                 timeout,
@@ -849,6 +860,11 @@ impl ExtensionManager {
                 )
                 .await?
             }
+            #[cfg(not(feature = "mcp-http"))]
+            ExtensionConfig::StreamableHttp { .. } => {
+                return Err(transport_disabled("streamable_http", "mcp-http"));
+            }
+            #[cfg(feature = "mcp-stdio")]
             ExtensionConfig::Stdio {
                 cmd,
                 args,
@@ -869,6 +885,11 @@ impl ExtensionManager {
                     )
                     .await?,
                 )
+            }
+            #[cfg(not(feature = "mcp-stdio"))]
+            ExtensionConfig::Stdio { .. } => {
+                let _ = session_id;
+                return Err(transport_disabled("stdio", "mcp-stdio"));
             }
         };
 

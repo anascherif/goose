@@ -387,6 +387,13 @@ impl ClientHandler for GooseClient {
         if let Some(handler) = &self.capabilities.elicitation_handler {
             return Ok(handler(&request));
         }
+        if !self.capabilities.action_required_elicitation {
+            return Err(ErrorData::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "elicitation is not supported by this client",
+                None,
+            ));
+        }
 
         let session_id = self
             .resolve_session_id(&context.meta)
@@ -448,22 +455,23 @@ impl ClientHandler for GooseClient {
 
     fn get_info(&self) -> ClientConfig {
         let extensions = self.resolved_extensions();
+        #[expect(deprecated)]
+        let mut capabilities = ClientCapabilities::builder()
+            .enable_roots()
+            .enable_extensions_with(extensions)
+            .enable_elicitation()
+            .build();
+        if !self.capabilities.supports_elicitation() {
+            capabilities.elicitation = None;
+        }
 
-        InitializeRequestParams::new(
-            #[expect(deprecated)]
-            ClientCapabilities::builder()
-                .enable_roots()
-                .enable_extensions_with(extensions)
-                .enable_elicitation()
-                .build(),
-            self.resolved_client_info(),
-        )
-        .with_protocol_version(
-            self.capabilities
-                .protocol_version
-                .clone()
-                .unwrap_or_default(),
-        )
+        InitializeRequestParams::new(capabilities, self.resolved_client_info())
+            .with_protocol_version(
+                self.capabilities
+                    .protocol_version
+                    .clone()
+                    .unwrap_or_default(),
+            )
     }
 }
 
@@ -473,8 +481,20 @@ pub type ElicitationHandler = Arc<dyn Fn(&ElicitRequestParams) -> ElicitResult +
 pub struct GooseMcpClientCapabilities {
     pub mcpui: bool,
     pub host_info: Option<GooseMcpHostInfo>,
+    /// Answers elicitation requests inline. Takes precedence over
+    /// `action_required_elicitation`.
     pub elicitation_handler: Option<ElicitationHandler>,
+    /// Route elicitation requests to the host as action-required messages on the
+    /// originating tool call, answered through `ActionRequiredManager`. Elicitation
+    /// is advertised only when this is set or `elicitation_handler` is installed.
+    pub action_required_elicitation: bool,
     pub protocol_version: Option<ProtocolVersion>,
+}
+
+impl GooseMcpClientCapabilities {
+    pub fn supports_elicitation(&self) -> bool {
+        self.elicitation_handler.is_some() || self.action_required_elicitation
+    }
 }
 
 impl std::fmt::Debug for GooseMcpClientCapabilities {
@@ -484,6 +504,10 @@ impl std::fmt::Debug for GooseMcpClientCapabilities {
             .field("mcpui", &self.mcpui)
             .field("host_info", &self.host_info)
             .field("elicitation_handler", &self.elicitation_handler.is_some())
+            .field(
+                "action_required_elicitation",
+                &self.action_required_elicitation,
+            )
             .field("protocol_version", &self.protocol_version)
             .finish()
     }
@@ -1063,12 +1087,14 @@ mod tests {
                 mcpui: true,
                 host_info: None,
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
             GoosePlatform::GooseCli => GooseMcpClientCapabilities {
                 mcpui: false,
                 host_info: None,
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
         };
@@ -1294,6 +1320,39 @@ mod tests {
         assert_eq!(mime_types, &json!(["text/html;profile=mcp-app"]));
     }
 
+    fn client_with(capabilities: GooseMcpClientCapabilities) -> GooseClient {
+        GooseClient::new(
+            Arc::new(Mutex::new(Vec::new())),
+            "test-client".to_string(),
+            env!("CARGO_PKG_VERSION"),
+            capabilities,
+            PathBuf::new(),
+            Arc::new(ActionRequiredManager::new()),
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    #[test]
+    fn elicitation_is_advertised_only_when_the_host_can_answer() {
+        let advertised = |capabilities| {
+            ClientHandler::get_info(&client_with(capabilities))
+                .capabilities
+                .elicitation
+                .is_some()
+        };
+        assert!(!advertised(GooseMcpClientCapabilities::default()));
+        assert!(advertised(GooseMcpClientCapabilities {
+            action_required_elicitation: true,
+            ..Default::default()
+        }));
+        assert!(advertised(GooseMcpClientCapabilities {
+            elicitation_handler: Some(Arc::new(|_| {
+                ElicitResult::new(ElicitationAction::Decline)
+            })),
+            ..Default::default()
+        }));
+    }
+
     #[test]
     fn test_client_capabilities_advertise_roots() {
         let client = new_client(GoosePlatform::GooseCli);
@@ -1336,6 +1395,7 @@ mod tests {
                     client_version: Some("0.1.0".to_string()),
                 }),
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
             std::env::current_dir().unwrap_or_default(),
@@ -1371,6 +1431,7 @@ mod tests {
                     client_version: Some("0.1.0".to_string()),
                 }),
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
             std::env::current_dir().unwrap_or_default(),
@@ -1403,6 +1464,7 @@ mod tests {
                     client_version: Some("0.1.0".to_string()),
                 }),
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
             std::env::current_dir().unwrap_or_default(),

@@ -220,6 +220,21 @@ The extraction preserves the runtime's behavior, with these necessary boundaries
   `ToolInfo` remain in `goose`. Its recipe DTO conversions are functions rather
   than foreign-trait impls because `ExtensionConfig` now belongs to this crate.
 
+Transports are opt-in Cargo features (native only):
+
+- `mcp-stdio` — stdio extensions and containerized builtins.
+- `mcp-http` — streamable HTTP, including Unix sockets and OAuth (`ExtensionAuth`).
+- `extension-malware-check` — OSV lookup for packages run by stdio `npx`/`uvx`.
+
+A config whose transport is not enabled fails to start with a configuration error.
+In-process builtins and platform extensions need no feature.
+
+`ExtensionHost` requires only `action_required`. The defaults suit a host that
+resolves its own `ExtensionSet`s and does not change selections at runtime:
+session lookup and selection changes fail, configs are used as given, and
+authorization is unavailable. MCP elicitation is advertised only when the client
+capabilities install an `elicitation_handler` or set `action_required_elicitation`.
+
 The native transports and their additional dependencies are target-gated; the
 existing WebAssembly agent loop does not acquire native process/network runtime
 requirements. Runtime-private cache/placement tests move with the implementation;

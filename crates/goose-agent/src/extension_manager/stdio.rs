@@ -18,6 +18,7 @@ pub(super) async fn connect(
     mut ctx: ConnectContext,
     host: &dyn ExtensionHost,
 ) -> ExtensionResult<McpClient> {
+    #[cfg(feature = "extension-malware-check")]
     crate::extension_malware_check::deny_if_malicious_cmd_args(cmd, args).await?;
 
     let command = match container {

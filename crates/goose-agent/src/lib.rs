@@ -5,7 +5,7 @@ pub mod container;
 pub mod events;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod extension;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "extension-malware-check"))]
 pub mod extension_malware_check;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod extension_manager;

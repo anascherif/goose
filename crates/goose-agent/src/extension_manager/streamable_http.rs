@@ -729,6 +729,7 @@ mod tests {
                 mcpui: false,
                 host_info: None,
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
             working_dir: working_dir.to_path_buf(),

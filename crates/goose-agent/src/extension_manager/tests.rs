@@ -108,6 +108,7 @@ fn manager() -> Arc<ExtensionManager> {
                 mcpui: false,
                 host_info: None,
                 elicitation_handler: None,
+                action_required_elicitation: true,
                 protocol_version: None,
             },
         },
@@ -379,4 +380,44 @@ async fn host_backed_selection_keeps_held_leases_unchanged() {
         .await
         .unwrap();
     assert_ne!(result.is_error, Some(true));
+}
+
+/// A host that resolves its own extension sets needs only `action_required`.
+struct MinimalHost(Arc<ActionRequiredManager>);
+
+impl ExtensionHost for MinimalHost {
+    fn action_required(&self) -> Arc<ActionRequiredManager> {
+        Arc::clone(&self.0)
+    }
+}
+
+#[tokio::test]
+async fn minimal_host_defaults_reject_runtime_changes_and_authorization() {
+    let host = Arc::new(MinimalHost(Arc::new(ActionRequiredManager::new())));
+    let manager = Arc::new(ExtensionManager::with_host(
+        host.clone(),
+        ClientContext {
+            name: "minimal".to_string(),
+            capabilities: Default::default(),
+        },
+    ));
+    let lease = manager
+        .resolve(&ExtensionSet::new("scope", None, vec![]).unwrap())
+        .await;
+    assert!(lease.tools().await.is_empty());
+
+    let config = ExtensionConfig::stdio("server", "server", "", 5u64);
+    assert!(manager.current_lease("scope").await.is_err());
+    assert!(manager.enable("scope", config.clone()).await.is_err());
+    assert!(host.select("scope", config.clone()).await.is_err());
+    assert!(host.disable("scope", "server").await.is_err());
+    assert!(host.extension_by_name("server").is_none());
+    assert_eq!(host.resolve_config(config.clone()).await.unwrap(), config);
+    let error = host
+        .auth()
+        .authorize("https://example.com/mcp", "server", None, None)
+        .await
+        .err()
+        .expect("authorization is unavailable");
+    assert!(error.to_string().contains("requires authorization"));
 }

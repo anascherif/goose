@@ -120,6 +120,7 @@ pub fn client_context(
             mcpui,
             host_info,
             elicitation_handler: None,
+            action_required_elicitation: true,
             protocol_version: None,
         },
     }

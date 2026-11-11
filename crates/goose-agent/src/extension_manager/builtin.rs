@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use super::host::ExtensionHost;
+#[cfg(feature = "mcp-stdio")]
 use super::stdio;
 use crate::container::Container;
 use crate::extension::name_to_key;
@@ -10,7 +9,7 @@ use crate::mcp_client::{ConnectContext, McpClient, McpClientTrait};
 pub(super) async fn connect(
     name: &str,
     container: Option<&Container>,
-    mut ctx: ConnectContext,
+    ctx: ConnectContext,
     host: &dyn ExtensionHost,
 ) -> ExtensionResult<Box<dyn McpClientTrait>> {
     let key = name_to_key(name);
@@ -18,7 +17,15 @@ pub(super) async fn connect(
         .builtin_extension(&key)
         .ok_or_else(|| ExtensionError::ConfigError(format!("Unknown extension: {}", name)))?;
 
+    #[cfg(not(feature = "mcp-stdio"))]
+    if container.is_some() {
+        return Err(ExtensionError::ConfigError(format!(
+            "builtin extension {name} in a container requires goose-agent's `mcp-stdio` feature"
+        )));
+    }
+    #[cfg(feature = "mcp-stdio")]
     if let Some(container) = container {
+        let mut ctx = ctx;
         ctx.docker_container = Some(container.id().to_string());
         tracing::info!(
             container = %container.id(),
@@ -26,7 +33,7 @@ pub(super) async fn connect(
             "Starting builtin extension inside Docker container"
         );
         let (program, args) = host.builtin_command(&key)?;
-        let command = stdio::docker_exec(container, HashMap::new(), &program, &args);
+        let command = stdio::docker_exec(container, Default::default(), &program, &args);
         return Ok(Box::new(stdio::spawn(command, ctx, host).await?));
     }
 
