@@ -100,10 +100,10 @@ impl ExtensionAuth for NoAuth {
 }
 
 fn manager() -> Arc<ExtensionManager> {
-    manager_with(StartupPolicy::default(), CollisionPolicy::default())
+    manager_with(StartupPolicy::default())
 }
 
-fn manager_with(startup: StartupPolicy, collisions: CollisionPolicy) -> Arc<ExtensionManager> {
+fn manager_with(startup: StartupPolicy) -> Arc<ExtensionManager> {
     Arc::new(
         ExtensionManager::with_host(
             Arc::new(TestHost::new()),
@@ -118,8 +118,7 @@ fn manager_with(startup: StartupPolicy, collisions: CollisionPolicy) -> Arc<Exte
                 },
             },
         )
-        .with_startup_policy(startup)
-        .with_collision_policy(collisions),
+        .with_startup_policy(startup),
     )
 }
 
@@ -502,7 +501,7 @@ async fn strict_startup_fails_the_catalog_when_discovery_fails() {
 
 #[tokio::test]
 async fn best_effort_startup_omits_failed_extensions() {
-    let manager = manager_with(StartupPolicy::BestEffort, CollisionPolicy::default());
+    let manager = manager_with(StartupPolicy::BestEffort);
     add_static(&manager, "good", Some(vec!["tool"])).await;
     add_static(&manager, "broken", None).await;
     let lease = manager.scope_lease("session").await;
@@ -518,7 +517,7 @@ async fn strict_startup_fails_the_catalog_when_an_extension_fails_to_start() {
         (StartupPolicy::Strict, true),
         (StartupPolicy::BestEffort, false),
     ] {
-        let manager = manager_with(startup, CollisionPolicy::default());
+        let manager = manager_with(startup);
         let lease = manager
             .resolve(&ExtensionSet::new("scope", None, vec![config.clone()]).unwrap())
             .await;
@@ -529,24 +528,15 @@ async fn strict_startup_fails_the_catalog_when_an_extension_fails_to_start() {
 }
 
 #[tokio::test]
-async fn colliding_tool_names_are_rejected_by_default() {
+async fn colliding_tool_names_keep_the_first_extension() {
     // `developer` is unprefixed, so its `other__tool` collides with `other`'s `tool`.
-    for (collisions, expected) in [
-        (CollisionPolicy::Reject, None),
-        (CollisionPolicy::KeepFirst, Some(vec!["other__tool"])),
-    ] {
-        let manager = manager_with(StartupPolicy::default(), collisions);
-        add_static(&manager, "developer", Some(vec!["other__tool"])).await;
-        add_static(&manager, "other", Some(vec!["tool"])).await;
-        let tools = manager.scope_lease("session").await.tools().await;
-        match expected {
-            None => {
-                let error = tools.unwrap_err().to_string();
-                assert!(error.contains("duplicate tool name other__tool"), "{error}");
-            }
-            Some(expected) => assert_eq!(tool_names(tools.unwrap()), expected),
-        }
-    }
+    let manager = manager();
+    add_static(&manager, "developer", Some(vec!["other__tool"])).await;
+    add_static(&manager, "other", Some(vec!["tool"])).await;
+    let lease = manager.scope_lease("session").await;
+    let tools = lease.tools().await.unwrap();
+    assert_eq!(tool_names(tools.clone()), ["other__tool"]);
+    assert_eq!(get_tool_owner(&tools[0]).as_deref(), Some("developer"));
 }
 
 /// Hands out `StaticToolsClient`s, counting connections; declines when `tools` is `None`.

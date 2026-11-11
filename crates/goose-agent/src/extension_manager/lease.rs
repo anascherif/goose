@@ -24,8 +24,8 @@ use tracing::warn;
 use super::{
     get_tool_meta_value, get_tool_owner, get_tool_resource_uri, insert_trusted_tool_update_meta,
     recover_mangled_tool_name, remove_subagent_session_meta, remove_untrusted_mcp_app_meta,
-    ActionRequiredStream, CollisionPolicy, Extension, ExtensionLoadResult, ExtensionManager,
-    ExtensionMutation, ExtensionSlot, GooseMcpAppToolAttachment, Registration, StartupPolicy,
+    ActionRequiredStream, Extension, ExtensionLoadResult, ExtensionManager, ExtensionMutation,
+    ExtensionSlot, GooseMcpAppToolAttachment, Registration, StartupPolicy,
     TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
 };
 use crate::action_required_manager::ActionRequiredManager;
@@ -154,7 +154,6 @@ impl ToolCatalog {
         scope_id: &str,
         slots: &[Arc<ExtensionSlot>],
         startup: StartupPolicy,
-        collisions: CollisionPolicy,
     ) -> Result<Self, String> {
         let outcomes = futures::future::join_all(slots.iter().map(|slot| async move {
             let extension = match slot.outcome().await {
@@ -194,24 +193,13 @@ impl ToolCatalog {
         for (extension, tools) in &lists {
             for tool in tools.iter() {
                 let name = provider_safe_tool_name(&tool.name);
-                if let Some(&existing) = by_name.get(&name) {
-                    let existing: &CatalogEntry = &entries[existing];
-                    match collisions {
-                        CollisionPolicy::Reject => {
-                            return Err(format!(
-                                "duplicate tool name {name} from extensions {} and {}",
-                                existing.extension.key, extension.key
-                            ))
-                        }
-                        CollisionPolicy::KeepFirst => {
-                            warn!(
-                                tool = %name,
-                                extension = %extension.key,
-                                "duplicate tool name, keeping the earlier extension's"
-                            );
-                            continue;
-                        }
-                    }
+                if by_name.contains_key(&name) {
+                    warn!(
+                        tool = %name,
+                        extension = %extension.key,
+                        "duplicate tool name, keeping the earlier extension's"
+                    );
+                    continue;
                 }
                 let server_name = tool
                     .name
@@ -273,7 +261,6 @@ pub struct ExtensionLease {
     action_required: Arc<ActionRequiredManager>,
     hydrate_mcp_apps: bool,
     startup_policy: StartupPolicy,
-    collision_policy: CollisionPolicy,
 }
 
 struct ResolvedTool<'a> {
@@ -290,7 +277,6 @@ impl ExtensionLease {
         action_required: Arc<ActionRequiredManager>,
         hydrate_mcp_apps: bool,
         startup_policy: StartupPolicy,
-        collision_policy: CollisionPolicy,
     ) -> Self {
         Self {
             id: LeaseId::next(),
@@ -301,21 +287,13 @@ impl ExtensionLease {
             action_required,
             hydrate_mcp_apps,
             startup_policy,
-            collision_policy,
         }
     }
 
     /// Built once per lease. A failure is pinned too: resolve a new lease to retry.
     async fn tool_catalog(&self) -> anyhow::Result<&ToolCatalog> {
         self.tool_catalog
-            .get_or_init(|| {
-                ToolCatalog::build(
-                    &self.scope_id,
-                    &self.slots,
-                    self.startup_policy,
-                    self.collision_policy,
-                )
-            })
+            .get_or_init(|| ToolCatalog::build(&self.scope_id, &self.slots, self.startup_policy))
             .await
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))

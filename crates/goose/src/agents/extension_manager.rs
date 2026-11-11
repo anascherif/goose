@@ -43,11 +43,10 @@ impl ExtensionManager {
         let host = Arc::new(goose_host::GooseExtensionHost {
             context: context.clone(),
         });
-        // goose keeps working when an extension fails or two expose the same tool name.
+        // goose keeps working when an extension fails to start.
         let manager = Arc::new(
             goose_agent::extension_manager::ExtensionManager::with_host(host, client)
-                .with_startup_policy(goose_agent::extension_manager::StartupPolicy::BestEffort)
-                .with_collision_policy(goose_agent::extension_manager::CollisionPolicy::KeepFirst),
+                .with_startup_policy(goose_agent::extension_manager::StartupPolicy::BestEffort),
         );
         Self { manager, context }
     }

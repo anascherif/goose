@@ -391,16 +391,6 @@ pub enum StartupPolicy {
     BestEffort,
 }
 
-/// What a catalog does when two extensions expose the same public tool name.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CollisionPolicy {
-    /// Fail the catalog rather than route a name to an unexpected extension.
-    #[default]
-    Reject,
-    /// Keep the tool from the extension selected first and log the duplicate.
-    KeepFirst,
-}
-
 /// The client identity and capabilities used to negotiate with MCP servers.
 #[derive(Clone)]
 pub struct ClientContext {
@@ -459,7 +449,6 @@ pub struct ExtensionManager {
     default_client: Arc<ClientContext>,
     clients: std::sync::Mutex<HashMap<String, Arc<ClientContext>>>,
     startup_policy: StartupPolicy,
-    collision_policy: CollisionPolicy,
 }
 
 /// A flattened representation of a resource used by the agent to prepare inference
@@ -649,17 +638,11 @@ impl ExtensionManager {
             default_client: Arc::new(default_client),
             clients: std::sync::Mutex::new(HashMap::new()),
             startup_policy: StartupPolicy::default(),
-            collision_policy: CollisionPolicy::default(),
         }
     }
 
     pub fn with_startup_policy(mut self, policy: StartupPolicy) -> Self {
         self.startup_policy = policy;
-        self
-    }
-
-    pub fn with_collision_policy(mut self, policy: CollisionPolicy) -> Self {
-        self.collision_policy = policy;
         self
     }
 
@@ -695,7 +678,6 @@ impl ExtensionManager {
             self.host.action_required(),
             client.hydrates_mcp_apps(),
             self.startup_policy,
-            self.collision_policy,
         )
     }
 

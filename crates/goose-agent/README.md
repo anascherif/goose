@@ -235,13 +235,12 @@ session lookup and selection changes fail, configs are used as given, and
 authorization is unavailable. MCP elicitation is advertised only when the client
 capabilities install an `elicitation_handler` or set `action_required_elicitation`.
 
-A lease's tool catalog follows the manager's `StartupPolicy` and `CollisionPolicy`.
-By default (`Strict`, `Reject`) an extension that fails to start or list tools, or
-two extensions exposing the same tool name, fail the catalog: `tools` and `ready`
-return the error, so a configured tool is never silently missing or misrouted.
-`BestEffort` omits failed extensions and `KeepFirst` keeps the earlier extension's
-tool; `goose` opts into both. A catalog failure is pinned to its lease; resolve a
-new lease to retry.
+A lease's tool catalog follows the manager's `StartupPolicy`. By default
+(`Strict`) an extension that fails to start or list tools fails the catalog:
+`tools` and `ready` return the error, so a configured tool is never silently
+missing. `BestEffort` omits failed extensions; `goose` opts into it. When two extensions
+expose the same tool name, the extension selected first keeps it. A catalog failure is pinned to its lease;
+resolve a new lease to retry.
 
 The native transports and their additional dependencies are target-gated; the
 existing WebAssembly agent loop does not acquire native process/network runtime
