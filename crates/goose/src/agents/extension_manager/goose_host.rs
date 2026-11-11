@@ -179,6 +179,16 @@ impl ExtensionHost for GooseExtensionHost {
             .unwrap_or(crate::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT)
     }
 
+    fn connection_working_dir(&self, directory: &std::path::Path) -> PathBuf {
+        if directory.as_os_str().is_empty() {
+            std::env::var("GOOSE_WORKING_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default())
+        } else {
+            directory.to_path_buf()
+        }
+    }
+
     fn resolve_command(&self, cmd: &str) -> PathBuf {
         SearchPaths::builder()
             .with_npm()

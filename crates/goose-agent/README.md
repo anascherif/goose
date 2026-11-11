@@ -243,8 +243,14 @@ Transports are opt-in Cargo features (native only):
 A config whose transport is not enabled fails to start with a configuration error.
 In-process extensions need no transport feature. Builtin registries and Docker
 command construction live in goose's connectors. The runtime has no container
-placement or builtin/platform callback API. `spawn_stdio`, `ConnectContext`, and
-`McpClient::connect` support custom connectors without a second runtime.
+placement or builtin/platform callback API. For external configs,
+`Registration::from_config_with_command` accepts a `StdioCommand` that only builds
+the host's local/container command; GDK still owns secret resolution and refresh,
+working-directory/timeout setup, malware checks, MCP negotiation, and supervision.
+`ExtensionHost::connection_working_dir` supplies a host-specific fallback without
+changing the lease's tool-call working-directory metadata. `spawn_stdio`,
+`ConnectContext`, and `McpClient::connect` support custom connectors without a
+second runtime.
 
 `ExtensionHost` requires only `action_required`. The defaults suit a host that
 resolves its own `ExtensionSet`s and does not change selections at runtime:
@@ -265,10 +271,12 @@ a new process), requests made under it are answered as expired rather than run
 against extensions they did not see. `ToolCallBatch` runs calls concurrently,
 forwards their MCP notifications (including those delivered just after the
 result), and collects one response message that survives cancellation.
-`ExtensionOperation` composes these into an `Operation` for hosts without an
-approval step: build one per turn with a `LeaseResolver`. `goose`'s own tool
-execution adds approvals, hooks, and chat mode on the same `TurnLease` and
-`ToolCallBatch`.
+`ExtensionOperation` composes these into an `Operation`: build one per turn with a
+`LeaseResolver`, after `ToolApprovalOperation` (use an always-allow policy if no
+confirmation is needed). It shares `tool_call_state::pending_tool_requests` with
+`ToolOperation` and goose execution, so unanswered calls still require approval
+and provider-executed calls are never redispatched. `goose`'s own tool execution
+adds hooks and chat mode on the same `TurnLease` and `ToolCallBatch`.
 
 The native transports and their additional dependencies are target-gated; the
 existing WebAssembly agent loop does not acquire native process/network runtime

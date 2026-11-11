@@ -3,7 +3,7 @@
 //! [`TurnLease`] holds the lease the latest inference advertised, so tool requests run
 //! against the extensions that offered them. [`ToolCallBatch`] runs calls concurrently and
 //! collects one response message. [`ExtensionOperation`] composes them into an
-//! [`Operation`] for hosts that need no approval step.
+//! [`Operation`] using the shared tool-approval state.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -11,9 +11,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt};
-use goose_provider_types::conversation::message::{
-    Message, MessageContent, ProviderMetadata, ToolRequest,
-};
+use goose_provider_types::conversation::message::{Message, ProviderMetadata};
 use goose_provider_types::conversation::Conversation;
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData, Tool};
 
@@ -174,7 +172,8 @@ pub trait LeaseResolver<S>: Send + Sync {
 }
 
 /// Advertises a session's extension tools and runs the calls the model makes to them,
-/// without an approval step. Each inference resolves a fresh lease and calls run against
+/// after approval. Put `ToolApprovalOperation` before this operation, including for
+/// an always-allow policy. Each inference resolves a fresh lease and calls run against
 /// the one that advertised them; requests from a turn whose lease is gone are expired.
 /// Build one per turn.
 pub struct ExtensionOperation<S> {
@@ -202,24 +201,6 @@ impl<S> ExtensionOperation<S> {
             None => Ok(self.lease.set(self.resolver.resolve(session).await?)),
         }
     }
-}
-
-/// Unanswered requests in the turn that were not executed by the provider.
-fn pending_requests(conversation: &Conversation) -> Result<Vec<ToolRequest>> {
-    let turn = messages_since_kickoff(conversation)?;
-    let answered: HashSet<&str> = turn
-        .iter()
-        .flat_map(Message::get_tool_response_ids)
-        .collect();
-    Ok(turn
-        .iter()
-        .flat_map(|message| &message.content)
-        .filter_map(MessageContent::as_tool_request)
-        .filter(|request| {
-            !request.was_executed_externally() && !answered.contains(request.id.as_str())
-        })
-        .cloned()
-        .collect())
 }
 
 /// Format extension instructions as one prompt section.
@@ -286,7 +267,8 @@ where
         conversation: &Conversation,
         emit: &Emitter,
     ) -> Result<OperationResult<E>> {
-        let pending = pending_requests(conversation)?;
+        let pending =
+            crate::tool_call_state::pending_tool_requests(messages_since_kickoff(conversation)?);
         if pending.is_empty() {
             return not_applicable();
         }
@@ -317,6 +299,7 @@ where
 
         let mut calls = Vec::new();
         for request in mine {
+            let request = request.clone();
             let call = request.tool_call.clone().expect("filtered to parsed calls");
             let call = if expired {
                 ToolCallResult::from(Ok(CallToolResult::error(vec![ContentBlock::text(

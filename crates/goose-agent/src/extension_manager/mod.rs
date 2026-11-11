@@ -36,6 +36,8 @@ pub use operation::{
     instructions_prompt, ExtensionOperation, LeaseResolver, PendingCall, ToolCallBatch, TurnLease,
     EXPIRED_TOOL_REQUEST,
 };
+#[cfg(feature = "mcp-stdio")]
+pub use registration::StdioCommand;
 pub use registration::{ConnectRequest, Connector, Registration};
 
 type McpClientBox = Arc<dyn McpClientTrait>;

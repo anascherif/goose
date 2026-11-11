@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use goose_agent::extension_manager::host::ExtensionHost;
 use goose_agent::extension_manager::{ConnectRequest, Connector, Registration};
 use goose_agent::mcp_client::McpClientTrait;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 pub(super) fn registration(
     config: ExtensionConfig,
@@ -23,15 +23,21 @@ pub(super) fn registration(
     let mut revision = std::collections::hash_map::DefaultHasher::new();
     container.as_ref().map(|c| c.id()).hash(&mut revision);
     let revision = if def.is_some() { 0 } else { revision.finish() };
-    let mut registration = Registration::new(
-        config.name(),
-        Arc::new(GooseConnector {
-            config: config.clone(),
-            container,
-            host,
-            resolved: OnceLock::new(),
-        }),
-    )
+    let mut registration = match &config {
+        ExtensionConfig::External(transport) => Registration::from_config_with_command(
+            transport.clone(),
+            host.clone(),
+            Arc::new(GoosePlacement { container, host }),
+        ),
+        _ => Registration::new(
+            config.name(),
+            Arc::new(GooseConnector {
+                config: config.clone(),
+                container,
+                host,
+            }),
+        ),
+    }
     .with_revision(revision)
     .with_metadata(serde_json::to_value(&config).expect("config serializes"));
     let available_tools = match &config {
@@ -64,7 +70,6 @@ struct GooseConnector {
     config: ExtensionConfig,
     container: Option<Container>,
     host: Arc<GooseExtensionHost>,
-    resolved: OnceLock<ExtensionConfig>,
 }
 #[async_trait]
 impl Connector for GooseConnector {
@@ -72,12 +77,7 @@ impl Connector for GooseConnector {
         &self,
         request: &ConnectRequest,
     ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
-        let config = self
-            .config
-            .clone()
-            .resolve(crate::config::Config::global())
-            .await?;
-        let resolved = self.resolved.get_or_init(|| config);
+        let resolved = &self.config;
         if let ExtensionConfig::Builtin { name, .. } | ExtensionConfig::Platform { name, .. } =
             resolved
         {
@@ -87,14 +87,8 @@ impl Connector for GooseConnector {
                 return Ok((def.client_factory)(context));
             }
         }
-        let working_dir = if request.working_dir.as_os_str().is_empty() {
-            std::env::var("GOOSE_WORKING_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default())
-        } else {
-            request.working_dir.clone()
-        };
-        let mut context = request.connect_context(None, working_dir);
+        let mut context =
+            request.connect_context(None, self.host.connection_working_dir(&request.working_dir));
         let client: Box<dyn McpClientTrait> = match resolved {
             ExtensionConfig::Builtin { name, timeout, .. } => {
                 context.timeout = std::time::Duration::from_secs(
@@ -107,54 +101,25 @@ impl Connector for GooseConnector {
                 super::builtin::connect(name, self.container.as_ref(), context, self.host.as_ref())
                     .await?
             }
-            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
-                cmd,
-                args,
-                envs,
-                timeout,
-                cwd,
-                ..
-            }) => {
-                context.timeout = std::time::Duration::from_secs(
-                    timeout.unwrap_or_else(|| self.host.default_timeout()),
-                );
-                if let Some(cwd) = cwd {
-                    context.working_dir = cwd.into();
-                }
-                goose_agent::extension_malware_check::deny_if_malicious_cmd_args(cmd, args).await?;
-                let mut env = envs.get_env();
-                env.insert("AGENT_SESSION_ID".to_string(), request.scope_id.clone());
-                let command = self
-                    .host
-                    .stdio_command(cmd, args, env, self.container.as_ref())?;
-                Box::new(
-                    goose_agent::extension_manager::spawn_stdio(
-                        command,
-                        context,
-                        self.host.as_ref(),
-                    )
-                    .await?,
-                )
-            }
-            ExtensionConfig::External(
-                goose_agent::extension::ExtensionConfig::StreamableHttp { .. },
-            ) => {
-                let external = resolved.external().expect("HTTP config");
-                let registration = Registration::from_config(external.clone(), self.host.clone());
-                return registration.connector().connect(request).await;
-            }
+            ExtensionConfig::External(_) => unreachable!("external configs use the GDK connector"),
         };
         Ok(Some(client))
     }
-    async fn is_current(&self) -> bool {
-        let Some(resolved) = self.resolved.get() else {
-            return true;
-        };
-        self.config
-            .clone()
-            .resolve(crate::config::Config::global())
-            .await
-            .is_ok_and(|config| config == *resolved)
+}
+
+struct GoosePlacement {
+    container: Option<Container>,
+    host: Arc<GooseExtensionHost>,
+}
+impl goose_agent::extension_manager::StdioCommand for GoosePlacement {
+    fn command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: std::collections::HashMap<String, String>,
+    ) -> ExtensionResult<tokio::process::Command> {
+        self.host
+            .stdio_command(program, args, env, self.container.as_ref())
     }
 }
 

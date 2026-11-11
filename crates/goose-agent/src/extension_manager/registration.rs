@@ -18,6 +18,17 @@ use super::{host::ExtensionHost, ClientContext, ExtensionManager};
 use crate::extension::{name_to_key, ExtensionConfig, ExtensionResult};
 use crate::mcp_client::{ConnectContext, McpClientTrait};
 
+/// Host-specific process placement; transport setup and supervision stay shared.
+#[cfg(feature = "mcp-stdio")]
+pub trait StdioCommand: Send + Sync {
+    fn command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: std::collections::HashMap<String, String>,
+    ) -> ExtensionResult<tokio::process::Command>;
+}
+
 /// Opens the MCP client for one registration.
 #[async_trait]
 pub trait Connector: Send + Sync {
@@ -180,6 +191,8 @@ impl Registration {
                 config: config.clone(),
                 resolved: OnceLock::new(),
                 host,
+                #[cfg(feature = "mcp-stdio")]
+                command: None,
             }),
             revision: 0,
             available_tools,
@@ -189,6 +202,23 @@ impl Registration {
             metadata: serde_json::Value::Null,
             config: Some(config),
         }
+    }
+
+    /// External transport registration with host-specific subprocess placement.
+    #[cfg(feature = "mcp-stdio")]
+    pub fn from_config_with_command(
+        config: ExtensionConfig,
+        host: Arc<dyn ExtensionHost>,
+        command: Arc<dyn StdioCommand>,
+    ) -> Self {
+        let mut registration = Self::from_config(config.clone(), Arc::clone(&host));
+        registration.connector = Arc::new(ConfigConnector {
+            config,
+            host,
+            resolved: OnceLock::new(),
+            command: Some(command),
+        });
+        registration
     }
 
     /// Mark an in-process connector as trusted to emit host-reserved metadata.
@@ -235,6 +265,8 @@ struct ConfigConnector {
     config: ExtensionConfig,
     resolved: OnceLock<ExtensionConfig>,
     host: Arc<dyn ExtensionHost>,
+    #[cfg(feature = "mcp-stdio")]
+    command: Option<Arc<dyn StdioCommand>>,
 }
 
 #[async_trait]
@@ -249,10 +281,7 @@ impl Connector for ConfigConnector {
         #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
         let working_dir = match resolved {
             ExtensionConfig::Stdio { cwd: Some(cwd), .. } => PathBuf::from(cwd),
-            _ if request.working_dir.as_os_str().is_empty() => {
-                std::env::current_dir().unwrap_or_default()
-            }
-            _ => request.working_dir.clone(),
+            _ => self.host.connection_working_dir(&request.working_dir),
         };
         #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
         let host = self.host.as_ref();
@@ -311,6 +340,7 @@ impl Connector for ConfigConnector {
                         cmd,
                         args,
                         envs,
+                        self.command.as_deref(),
                         request.connect_context(*timeout, working_dir),
                         host,
                     )

@@ -665,9 +665,11 @@ fn emitter() -> (
 fn turn_requesting(names: &[&str]) -> goose_provider_types::conversation::Conversation {
     use goose_provider_types::conversation::message::Message;
     let request = names.iter().fold(Message::assistant(), |message, name| {
-        message.with_tool_request(
+        message.with_tool_request_with_metadata(
             format!("call-{name}"),
             Ok(rmcp::model::CallToolRequestParams::new(name.to_string())),
+            None,
+            Some(serde_json::json!({crate::tool_call_state::EXECUTABLE_KEY: true})),
         )
     });
     goose_provider_types::conversation::Conversation::new_unvalidated([
@@ -753,6 +755,40 @@ async fn extension_operation_expires_requests_no_inference_advertised() {
             EXPIRED_TOOL_REQUEST.to_string()
         )]
     );
+}
+
+#[tokio::test]
+async fn extension_operation_does_not_run_unapproved_requests() {
+    use goose_provider_types::conversation::message::MessageContent;
+    let manager = manager();
+    add_static(&manager, "first", Some(vec!["a"])).await;
+    let operation = Op::new(Arc::new(ScopeResolver(manager)));
+    let (emit, _events) = emitter();
+    Operation::<(), Msg>::inference_tools(&operation, &())
+        .await
+        .unwrap();
+    for executable in [None, Some(false)] {
+        let mut conversation = turn_requesting(&["first__a"]);
+        for content in conversation
+            .messages_mut()
+            .iter_mut()
+            .flat_map(|m| &mut m.content)
+        {
+            if let MessageContent::ToolRequest(request) = content {
+                request.tool_meta = executable.map(|flag| {
+                    serde_json::json!({
+                        crate::tool_call_state::EXECUTABLE_KEY: flag
+                    })
+                });
+            }
+        }
+        assert!(matches!(
+            Operation::<(), Msg>::run(&operation, &(), &conversation, &emit)
+                .await
+                .unwrap(),
+            crate::operation::OperationResult::NotApplicable
+        ));
+    }
 }
 
 fn notification() -> rmcp::model::ServerNotification {

@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::FutureExt;
 use goose_agent::post_tool_call_hook::PostToolCallHook;
-use goose_agent::tool_call_state::request_executable;
+use goose_agent::tool_call_state::pending_tool_requests as executable_tool_requests;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Role, Tool, ToolAnnotations,
 };
@@ -628,29 +628,14 @@ impl ToolExecutionOperation {
 }
 
 pub(super) fn pending_tool_requests(messages: &[Message]) -> Vec<(ToolRequest, ToolDisposition)> {
-    let answered: HashSet<&str> = messages
-        .iter()
-        .flat_map(Message::get_tool_response_ids)
-        .collect();
-
-    messages
-        .iter()
-        .filter(|message| message.role == Role::Assistant)
-        .flat_map(|message| {
-            message.content.iter().filter_map(|c| match c {
-                MessageContent::ToolRequest(req) if req.was_executed_externally() => None,
-                MessageContent::ToolRequest(req) if !answered.contains(req.id.as_str()) => {
-                    if let Err(parse_error) = &req.tool_call {
-                        return Some((
-                            req.clone(),
-                            ToolDisposition::ParseError(parse_error.to_string()),
-                        ));
-                    }
-                    (request_executable(req) == Some(true))
-                        .then(|| (req.clone(), ToolDisposition::Execute))
-                }
-                _ => None,
-            })
+    executable_tool_requests(messages)
+        .into_iter()
+        .map(|request| {
+            let disposition = match &request.tool_call {
+                Ok(_) => ToolDisposition::Execute,
+                Err(error) => ToolDisposition::ParseError(error.to_string()),
+            };
+            (request.clone(), disposition)
         })
         .collect()
 }
