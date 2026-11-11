@@ -348,13 +348,13 @@ impl ToolExecutionOperation {
         self.defer_tools
     }
 
-    async fn mcp_tools(&self, lease: &ExtensionLease) -> Vec<Tool> {
-        lease
+    async fn mcp_tools(&self, lease: &ExtensionLease) -> Result<Vec<Tool>> {
+        Ok(lease
             .non_platform_tools()
-            .await
+            .await?
             .into_iter()
             .filter(is_tool_visible_to_model)
-            .collect()
+            .collect())
     }
 
     async fn enable_tools(
@@ -371,7 +371,12 @@ impl ToolExecutionOperation {
                 return CallToolResult::error(vec![ContentBlock::text(error.to_string())])
             }
         };
-        let tools = self.mcp_tools(lease).await;
+        let tools = match self.mcp_tools(lease).await {
+            Ok(tools) => tools,
+            Err(error) => {
+                return CallToolResult::error(vec![ContentBlock::text(error.to_string())])
+            }
+        };
         if let Some(name) = params
             .tool_names
             .iter()
@@ -893,11 +898,11 @@ impl Operation<Session, GooseEffect> for ToolExecutionOperation {
 
     async fn inference_tools(&self, session: &Session) -> Result<Vec<Tool>> {
         let lease = self.lease(session).await?;
-        let mut tools = lease.tools_excluding(crate::skills::EXTENSION_NAME).await;
+        let mut tools = lease.tools_excluding(crate::skills::EXTENSION_NAME).await?;
         if self.defers_tools(&lease) {
             let deferred: HashSet<_> = self
                 .mcp_tools(&lease)
-                .await
+                .await?
                 .into_iter()
                 .filter(|tool| !self.always_load_tools.contains(tool.name.as_ref()))
                 .map(|tool| tool.name.to_string())
@@ -964,7 +969,7 @@ impl Operation<Session, GooseEffect> for ToolExecutionOperation {
         if self.defers_tools(&lease) {
             let mut names: Vec<_> = self
                 .mcp_tools(&lease)
-                .await
+                .await?
                 .into_iter()
                 .filter(|tool| !self.always_load_tools.contains(tool.name.as_ref()))
                 .map(|tool| tool.name.to_string())
@@ -1035,7 +1040,7 @@ impl Operation<Session, GooseEffect> for ToolExecutionOperation {
 
         let mut known_tools: HashSet<_> = lease
             .tools_excluding(crate::skills::EXTENSION_NAME)
-            .await
+            .await?
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();

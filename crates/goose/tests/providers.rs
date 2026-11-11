@@ -317,7 +317,7 @@ impl ProviderFixture {
             .extension_manager
             .current_lease(&self.session_id)
             .await?;
-        let tools = lease.tools().await;
+        let tools = lease.tools().await.unwrap();
         let info = lease.instructions().await;
         let system = PromptManager::new()
             .builder()

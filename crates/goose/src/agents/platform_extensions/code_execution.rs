@@ -54,6 +54,15 @@ struct GetFunctionDetailsInput {
     functions: Vec<String>,
 }
 
+/// The tools code mode can call from the dispatching lease.
+async fn catalog(ctx: &ToolCallContext) -> Result<Vec<McpTool>, String> {
+    dispatching_lease(ctx)
+        .tools_excluding(EXTENSION_NAME)
+        .await
+        .map(callable_catalog)
+        .map_err(|error| error.to_string())
+}
+
 fn callable_catalog(tools: Vec<McpTool>) -> Vec<McpTool> {
     tools
         .into_iter()
@@ -104,8 +113,7 @@ impl CodeExecutionClient {
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ContentBlock>, String> {
         let input: ExecuteWithToolGraph = parse_arguments(arguments)?;
-        let catalog =
-            callable_catalog(dispatching_lease(ctx).tools_excluding(EXTENSION_NAME).await);
+        let catalog = catalog(ctx).await?;
         let manager = self
             .context
             .extension_manager
@@ -290,20 +298,21 @@ impl McpClientTrait for CodeExecutionClient {
         cancellation_token: CancellationToken,
     ) -> Result<CallToolResult, Error> {
         let result = match name {
-            "list_functions" => {
-                let catalog =
-                    callable_catalog(dispatching_lease(ctx).tools_excluding(EXTENSION_NAME).await);
+            "list_functions" => catalog(ctx).await.map(|catalog| {
                 let functions: Vec<_> = catalog.iter().map(|tool| json!({
                     "name": tool.name,
                     "description": tool.description.as_deref().unwrap_or("").lines().next().unwrap_or("").chars().take(240).collect::<String>()
                 })).collect();
-                Ok(vec![ContentBlock::text(json!(functions).to_string())])
-            }
+                vec![ContentBlock::text(json!(functions).to_string())]
+            }),
             "get_function_details" => {
-                let catalog =
-                    callable_catalog(dispatching_lease(ctx).tools_excluding(EXTENSION_NAME).await);
-                parse_arguments::<GetFunctionDetailsInput>(arguments)
-                    .and_then(|input| function_details(&catalog, &input.functions))
+                catalog(ctx)
+                    .await
+                    .and_then(|catalog| {
+                        parse_arguments::<GetFunctionDetailsInput>(arguments)
+                            .map(|input| (catalog, input))
+                    })
+                    .and_then(|(catalog, input)| function_details(&catalog, &input.functions))
                     .map(|details| vec![ContentBlock::text(details.to_string())])
             }
             "execute_javascript" => {
@@ -580,7 +589,7 @@ mod tests {
             .await;
 
         let lease = manager.scope_lease("test-session").await;
-        let configs = callable_catalog(lease.tools_excluding(EXTENSION_NAME).await);
+        let configs = callable_catalog(lease.tools_excluding(EXTENSION_NAME).await.unwrap());
         let names = configs
             .iter()
             .map(|config| config.name.as_ref())
@@ -622,7 +631,7 @@ mod tests {
             .unwrap();
 
         let lease = manager.current_lease(&session.id).await.unwrap();
-        let configs = callable_catalog(lease.tools_excluding(EXTENSION_NAME).await);
+        let configs = callable_catalog(lease.tools_excluding(EXTENSION_NAME).await.unwrap());
         let names = configs
             .iter()
             .map(|config| config.name.as_ref())
@@ -668,6 +677,7 @@ mod tests {
         let tool_name = lease
             .tools()
             .await
+            .unwrap()
             .into_iter()
             .find(|tool| tool.name.ends_with("manage_extensions"))
             .unwrap()
@@ -798,6 +808,7 @@ mod tests {
                 .unwrap()
                 .tools()
                 .await
+                .unwrap()
         )
         .iter()
         .all(|tool| !tool.name.starts_with("visibility__")));

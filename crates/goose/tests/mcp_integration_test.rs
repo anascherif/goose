@@ -307,7 +307,7 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
 
     // The catalog: prefixed per extension, filtered by available_tools, and
     // spelled the way providers accept.
-    let names = tool_names(&lease.tools().await);
+    let names = tool_names(&lease.tools().await.unwrap());
     for name in &names {
         assert!(
             name.len() <= 64
@@ -329,15 +329,17 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
         assert!(names.contains(&expected.to_string()), "{names:?}");
     }
     assert!(!names.contains(&"fixture_stdio__get_image".to_string()));
-    let mut stdio_names = tool_names(&lease.tools_for("fixture_stdio").await);
+    let mut stdio_names = tool_names(&lease.tools_for("fixture_stdio").await.unwrap());
     stdio_names.sort();
     assert_eq!(
         stdio_names,
         ["fixture_stdio__get_code", "fixture_stdio__inspect_context"]
     );
-    assert!(tool_names(&lease.tools_excluding("fixture_stdio").await)
-        .iter()
-        .all(|name| !name.starts_with("fixture_stdio__")));
+    assert!(
+        tool_names(&lease.tools_excluding("fixture_stdio").await.unwrap())
+            .iter()
+            .all(|name| !name.starts_with("fixture_stdio__"))
+    );
 
     // Calls reach each transport.
     assert_eq!(call_text(&lease, "fixture_http__get_code").await, FAKE_CODE);
@@ -507,19 +509,21 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
         todo.clone(),
         skills.clone(),
     ];
-    assert!(!tool_names(&lease.tools().await).contains(&late));
+    assert!(!tool_names(&lease.tools().await.unwrap()).contains(&late));
     assert_eq!(
         call_text(&lease, "fixture_http__change_tools").await,
         "changed"
     );
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !tool_names(&fx.resolve(&session, &current).await.tools().await).contains(&late) {
+        while !tool_names(&fx.resolve(&session, &current).await.tools().await.unwrap())
+            .contains(&late)
+        {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     })
     .await
     .expect("tools/list_changed never invalidated the cache");
-    assert!(!tool_names(&lease.tools().await).contains(&late));
+    assert!(!tool_names(&lease.tools().await.unwrap()).contains(&late));
     assert_eq!(
         call_text(&fx.resolve(&session, &current).await, &late).await,
         "late"
@@ -528,7 +532,7 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
     // Removal is invisible to a held lease and visible to the session's next
     // one.
     assert!(fx.manager.disable(&session.id, "todo").await.unwrap());
-    assert!(tool_names(&lease.tools().await).contains(&"todo__todo_write".to_string()));
+    assert!(tool_names(&lease.tools().await.unwrap()).contains(&"todo__todo_write".to_string()));
     assert!(!tool_names(
         &fx.manager
             .current_lease(&session.id)
@@ -536,6 +540,7 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
             .unwrap()
             .tools()
             .await
+            .unwrap()
     )
     .contains(&"todo__todo_write".to_string()));
 
@@ -625,9 +630,9 @@ async fn extension_protocol_traffic_through_a_lease() {
     let lease = fx.resolve(&user, &configs).await;
     let subagent_lease = fx.resolve(&subagent, &configs[1..2]).await;
     let manage = "extensionmanager__manage_extensions".to_string();
-    assert!(tool_names(&lease.tools().await).contains(&manage));
-    assert!(!tool_names(&subagent_lease.tools().await).contains(&manage));
-    assert!(tool_names(&lease.tools().await).contains(&"fixture__get_code".to_string()));
+    assert!(tool_names(&lease.tools().await.unwrap()).contains(&manage));
+    assert!(!tool_names(&subagent_lease.tools().await.unwrap()).contains(&manage));
+    assert!(tool_names(&lease.tools().await.unwrap()).contains(&"fixture__get_code".to_string()));
 
     let discovery_2025_context =
         inspect_context(&lease, "fixture_discovery_2025__inspect_context").await;

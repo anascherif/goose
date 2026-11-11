@@ -626,8 +626,8 @@ impl StateMachineServices {
     ) -> Result<Vec<Tool>> {
         let lease = self.extension_manager.current_lease(session_id).await?;
         Ok(match extension_name {
-            Some(name) => lease.tools_for(&name).await,
-            None => lease.tools().await,
+            Some(name) => lease.tools_for(&name).await?,
+            None => lease.tools().await?,
         })
     }
 

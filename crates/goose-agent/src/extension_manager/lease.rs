@@ -24,8 +24,9 @@ use tracing::warn;
 use super::{
     get_tool_meta_value, get_tool_owner, get_tool_resource_uri, insert_trusted_tool_update_meta,
     recover_mangled_tool_name, remove_subagent_session_meta, remove_untrusted_mcp_app_meta,
-    ActionRequiredStream, Extension, ExtensionLoadResult, ExtensionMutation, ExtensionSlot,
-    GooseMcpAppToolAttachment, TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
+    ActionRequiredStream, CollisionPolicy, Extension, ExtensionLoadResult, ExtensionMutation,
+    ExtensionSlot, GooseMcpAppToolAttachment, StartupPolicy,
+    TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
 };
 use crate::action_required_manager::ActionRequiredManager;
 use crate::container::Container;
@@ -117,30 +118,68 @@ struct ToolCatalog {
 }
 
 impl ToolCatalog {
-    async fn build(scope_id: &str, extensions: &[Arc<Extension>]) -> Self {
-        let supports_resources = extensions
-            .iter()
-            .any(|extension| extension.supports_resources());
-        let extension_manager_key = name_to_key(EXTENSION_MANAGER_NAME);
-        let lists = futures::future::join_all(
-            extensions
-                .iter()
-                .map(|extension| extension.public_tools(scope_id)),
-        )
+    async fn build(
+        scope_id: &str,
+        slots: &[Arc<ExtensionSlot>],
+        startup: StartupPolicy,
+        collisions: CollisionPolicy,
+    ) -> Result<Self, String> {
+        let outcomes = futures::future::join_all(slots.iter().map(|slot| async move {
+            let extension = match slot.outcome().await {
+                Ok(Some(extension)) => Arc::clone(extension),
+                Ok(None) => return None,
+                Err(error) => {
+                    return Some(Err(format!(
+                        "extension {} failed to start: {error}",
+                        slot.config.name()
+                    )))
+                }
+            };
+            let tools = extension.public_tools(scope_id).await.map_err(|error| {
+                format!("extension {} failed to list tools: {error}", extension.key)
+            });
+            Some(tools.map(|tools| (extension, tools)))
+        }))
         .await;
 
-        let mut entries = Vec::new();
+        let mut lists = Vec::new();
+        for outcome in outcomes.into_iter().flatten() {
+            match outcome {
+                Ok(list) => lists.push(list),
+                Err(error) if startup == StartupPolicy::Strict => return Err(error),
+                // Start failures are reported by `ExtensionLease::start`; discovery
+                // failures only here.
+                Err(error) => warn!(%error, "omitting extension from the tool catalog"),
+            }
+        }
+        let supports_resources = lists
+            .iter()
+            .any(|(extension, _)| extension.supports_resources());
+        let extension_manager_key = name_to_key(EXTENSION_MANAGER_NAME);
+
+        let mut entries: Vec<CatalogEntry> = Vec::new();
         let mut by_name = HashMap::new();
-        for (extension, tools) in extensions.iter().zip(lists) {
+        for (extension, tools) in &lists {
             for tool in tools.iter() {
                 let name = provider_safe_tool_name(&tool.name);
-                if by_name.contains_key(&name) {
-                    warn!(
-                        tool = %name,
-                        extension = %extension.key,
-                        "duplicate tool name, keeping the earlier extension's"
-                    );
-                    continue;
+                if let Some(&existing) = by_name.get(&name) {
+                    let existing: &CatalogEntry = &entries[existing];
+                    match collisions {
+                        CollisionPolicy::Reject => {
+                            return Err(format!(
+                                "duplicate tool name {name} from extensions {} and {}",
+                                existing.extension.key, extension.key
+                            ))
+                        }
+                        CollisionPolicy::KeepFirst => {
+                            warn!(
+                                tool = %name,
+                                extension = %extension.key,
+                                "duplicate tool name, keeping the earlier extension's"
+                            );
+                            continue;
+                        }
+                    }
                 }
                 let server_name = tool
                     .name
@@ -166,7 +205,7 @@ impl ToolCatalog {
                 });
             }
         }
-        Self { entries, by_name }
+        Ok(Self { entries, by_name })
     }
 
     fn get(&self, name: &str) -> Option<&CatalogEntry> {
@@ -198,9 +237,11 @@ pub struct ExtensionLease {
     scope_id: String,
     working_dir: Option<PathBuf>,
     slots: Vec<Arc<ExtensionSlot>>,
-    tool_catalog: Arc<OnceCell<ToolCatalog>>,
+    tool_catalog: Arc<OnceCell<Result<ToolCatalog, String>>>,
     action_required: Arc<ActionRequiredManager>,
     hydrate_mcp_apps: bool,
+    startup_policy: StartupPolicy,
+    collision_policy: CollisionPolicy,
 }
 
 struct ResolvedTool<'a> {
@@ -216,6 +257,8 @@ impl ExtensionLease {
         slots: Vec<Arc<ExtensionSlot>>,
         action_required: Arc<ActionRequiredManager>,
         hydrate_mcp_apps: bool,
+        startup_policy: StartupPolicy,
+        collision_policy: CollisionPolicy,
     ) -> Self {
         Self {
             id: LeaseId::next(),
@@ -225,15 +268,25 @@ impl ExtensionLease {
             tool_catalog: Arc::new(OnceCell::new()),
             action_required,
             hydrate_mcp_apps,
+            startup_policy,
+            collision_policy,
         }
     }
 
-    async fn tool_catalog(&self) -> &ToolCatalog {
+    /// Built once per lease. A failure is pinned too: resolve a new lease to retry.
+    async fn tool_catalog(&self) -> anyhow::Result<&ToolCatalog> {
         self.tool_catalog
-            .get_or_init(|| async {
-                ToolCatalog::build(&self.scope_id, &self.start_extensions().await).await
+            .get_or_init(|| {
+                ToolCatalog::build(
+                    &self.scope_id,
+                    &self.slots,
+                    self.startup_policy,
+                    self.collision_policy,
+                )
             })
             .await
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
     async fn start_extensions(&self) -> Vec<Arc<Extension>> {
@@ -251,8 +304,18 @@ impl ExtensionLease {
         slot.start().await.cloned()
     }
 
+    /// Start every extension and report each one's outcome. Does not build the
+    /// tool catalog; see [`Self::ready`].
     pub async fn start(&self) -> Vec<ExtensionLoadResult> {
         futures::future::join_all(self.slots.iter().map(|slot| slot.load_result())).await
+    }
+
+    /// Start every extension and build the tool catalog under the manager's
+    /// startup and collision policies. Errors are those `tools` would return.
+    pub async fn ready(&self) -> anyhow::Result<Vec<ExtensionLoadResult>> {
+        let results = self.start().await;
+        self.tool_catalog().await?;
+        Ok(results)
     }
 
     pub fn id(&self) -> LeaseId {
@@ -267,32 +330,36 @@ impl ExtensionLease {
         self.working_dir.as_deref()
     }
 
-    pub async fn tools(&self) -> Vec<Tool> {
+    pub async fn tools(&self) -> anyhow::Result<Vec<Tool>> {
         self.tools_where(|_| true).await
     }
 
-    pub async fn tools_for(&self, extension: &str) -> Vec<Tool> {
+    pub async fn tools_for(&self, extension: &str) -> anyhow::Result<Vec<Tool>> {
         let key = name_to_key(extension);
         self.tools_where(|extension| extension.key == key).await
     }
 
-    pub async fn tools_excluding(&self, extension: &str) -> Vec<Tool> {
+    pub async fn tools_excluding(&self, extension: &str) -> anyhow::Result<Vec<Tool>> {
         let key = name_to_key(extension);
         self.tools_where(|extension| extension.key != key).await
     }
 
-    pub async fn non_platform_tools(&self) -> Vec<Tool> {
+    pub async fn non_platform_tools(&self) -> anyhow::Result<Vec<Tool>> {
         self.tools_where(|extension| !extension.is_platform()).await
     }
 
-    async fn tools_where(&self, predicate: impl Fn(&Extension) -> bool) -> Vec<Tool> {
-        self.tool_catalog()
-            .await
+    async fn tools_where(
+        &self,
+        predicate: impl Fn(&Extension) -> bool,
+    ) -> anyhow::Result<Vec<Tool>> {
+        Ok(self
+            .tool_catalog()
+            .await?
             .entries
             .iter()
             .filter(|entry| predicate(&entry.extension))
             .map(|entry| entry.tool.clone())
-            .collect()
+            .collect())
     }
 
     pub fn is_enabled(&self, extension: &str) -> bool {
@@ -580,7 +647,10 @@ impl ExtensionLease {
             .iter()
             .filter(|extension| extension.is_platform())
         {
-            let tools = self.tools_excluding(&extension.key).await;
+            let tools = self
+                .tools_excluding(&extension.key)
+                .await
+                .unwrap_or_default();
             if let Some(part) = extension.client.get_moim(&self.scope_id, &tools).await {
                 content.push(part);
             }
@@ -593,7 +663,10 @@ impl ExtensionLease {
         tool_name: &str,
         calling_app: Option<&str>,
     ) -> Result<ResolvedTool<'_>, ErrorData> {
-        let catalog = self.tool_catalog().await;
+        let catalog = self
+            .tool_catalog()
+            .await
+            .map_err(|error| ErrorData::new(ErrorCode::INTERNAL_ERROR, error.to_string(), None))?;
         let extension_key = calling_app.map(name_to_key);
         let belongs_to_extension = |entry: &&CatalogEntry| {
             extension_key

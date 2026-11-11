@@ -266,6 +266,15 @@ impl ExtensionSlot {
         }
     }
 
+    /// The running extension, `None` if the host declined it, or the start error.
+    pub(super) async fn outcome(&self) -> Result<Option<&Arc<Extension>>, &str> {
+        match self.runtime().await {
+            Runtime::Running(extension) => Ok(Some(extension)),
+            Runtime::Declined => Ok(None),
+            Runtime::Failed(error) => Err(error),
+        }
+    }
+
     pub(super) async fn load_result(&self) -> ExtensionLoadResult {
         let error = match self.runtime().await {
             Runtime::Failed(error) => Some(error.clone()),
@@ -302,7 +311,7 @@ impl Extension {
     /// The extension's tools as the model sees them: filtered by
     /// `available_tools`, prefixed unless first-class, tagged with the owner,
     /// schema-normalized.
-    pub(super) async fn public_tools(&self, scope_id: &str) -> Arc<Vec<Tool>> {
+    pub(super) async fn public_tools(&self, scope_id: &str) -> Result<Arc<Vec<Tool>>, String> {
         let version;
         {
             let cache = self.tools.lock().await;
@@ -311,13 +320,14 @@ impl Extension {
                 if cached.version == version && cached.scope_id == scope_id {
                     let tools = Arc::clone(&cached.tools);
                     if self.tools_version.load(Ordering::SeqCst) == version {
-                        return tools;
+                        return Ok(tools);
                     }
                 }
             }
         }
 
-        let tools = Arc::new(self.fetch_public_tools(scope_id).await);
+        // Failures are not cached, so the next catalog retries discovery.
+        let tools = Arc::new(self.fetch_public_tools(scope_id).await?);
 
         let mut cache = self.tools.lock().await;
         if self.tools_version.load(Ordering::SeqCst) == version {
@@ -327,10 +337,10 @@ impl Extension {
                 tools: Arc::clone(&tools),
             });
         }
-        tools
+        Ok(tools)
     }
 
-    async fn fetch_public_tools(&self, session_id: &str) -> Vec<Tool> {
+    async fn fetch_public_tools(&self, session_id: &str) -> Result<Vec<Tool>, String> {
         let cancel_token = CancellationToken::default();
         let expose_unprefixed = self.unprefixed;
         let mut tools = Vec::new();
@@ -342,10 +352,7 @@ impl Extension {
                 .await
             {
                 Ok(page) => page,
-                Err(e) => {
-                    warn!(extension = %self.key, error = %e, "Failed to list tools");
-                    break;
-                }
+                Err(e) => return Err(e.to_string()),
             };
             for mut tool in page.tools {
                 if !self.config.is_tool_available(&tool.name) {
@@ -371,8 +378,29 @@ impl Extension {
                 break;
             }
         }
-        tools
+        Ok(tools)
     }
+}
+
+/// Whether a lease may build its tool catalog when an extension fails to start or
+/// to list its tools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartupPolicy {
+    /// Any failure fails the catalog, so a configured tool is never silently missing.
+    #[default]
+    Strict,
+    /// Omit failed extensions; their failures appear in [`ExtensionLease::start`].
+    BestEffort,
+}
+
+/// What a catalog does when two extensions expose the same public tool name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CollisionPolicy {
+    /// Fail the catalog rather than route a name to an unexpected extension.
+    #[default]
+    Reject,
+    /// Keep the tool from the extension selected first and log the duplicate.
+    KeepFirst,
 }
 
 /// The client identity and capabilities used to negotiate with MCP servers.
@@ -432,6 +460,8 @@ pub struct ExtensionManager {
     host: Arc<dyn ExtensionHost>,
     default_client: Arc<ClientContext>,
     clients: std::sync::Mutex<HashMap<String, Arc<ClientContext>>>,
+    startup_policy: StartupPolicy,
+    collision_policy: CollisionPolicy,
 }
 
 /// A flattened representation of a resource used by the agent to prepare inference
@@ -627,7 +657,19 @@ impl ExtensionManager {
             host,
             default_client: Arc::new(default_client),
             clients: std::sync::Mutex::new(HashMap::new()),
+            startup_policy: StartupPolicy::default(),
+            collision_policy: CollisionPolicy::default(),
         }
+    }
+
+    pub fn with_startup_policy(mut self, policy: StartupPolicy) -> Self {
+        self.startup_policy = policy;
+        self
+    }
+
+    pub fn with_collision_policy(mut self, policy: CollisionPolicy) -> Self {
+        self.collision_policy = policy;
+        self
     }
 
     /// The latest client to attach to a session is the one its extensions start for from
@@ -661,6 +703,8 @@ impl ExtensionManager {
             slots,
             self.host.action_required(),
             client.hydrates_mcp_apps(),
+            self.startup_policy,
+            self.collision_policy,
         )
     }
 

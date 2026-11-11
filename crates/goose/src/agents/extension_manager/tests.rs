@@ -559,11 +559,11 @@ async fn app_dispatch_rejects_colliding_flattened_name_from_sibling_owner() {
 
     let lease = extension_manager.scope_lease("session").await;
     assert_eq!(
-        lease.tools().await.len(),
+        lease.tools().await.unwrap().len(),
         1,
         "colliding names collapse to one entry"
     );
-    let owner = get_tool_owner(&lease.tools().await[0]).unwrap();
+    let owner = get_tool_owner(&lease.tools().await.unwrap()[0]).unwrap();
     let other = if owner == "ext_a" {
         "ext_a__ext_b"
     } else {
@@ -614,6 +614,7 @@ async fn resolve_replaces_a_slot_whose_config_changed() {
         .await
         .tools()
         .await
+        .unwrap()
         .is_empty());
 
     let narrower = ExtensionSet::new(
@@ -623,7 +624,7 @@ async fn resolve_replaces_a_slot_whose_config_changed() {
     )
     .unwrap();
     let lease = extension_manager.resolve(&narrower).await;
-    assert!(lease.tools().await.is_empty());
+    assert!(lease.tools().await.unwrap().is_empty());
     let results = lease.start().await;
     assert!(!results[0].success);
     assert!(results[0]
@@ -788,7 +789,8 @@ async fn first_lease_starts_the_selection_in_the_session_record() {
         .await
         .unwrap()
         .tools()
-        .await;
+        .await
+        .unwrap();
 
     assert!(tools.iter().any(|tool| tool.name == "fixture__app_card"));
 }
@@ -894,10 +896,11 @@ async fn selection_changes_show_up_in_the_next_lease_only() {
     assert!(manager.disable(&session.id, "fixture").await.unwrap());
     let after = manager.current_lease(&session.id).await.unwrap();
 
-    assert!(after.tools().await.is_empty());
+    assert!(after.tools().await.unwrap().is_empty());
     assert!(before
         .tools()
         .await
+        .unwrap()
         .iter()
         .any(|tool| tool.name == "fixture__app_card"));
 }
@@ -972,6 +975,7 @@ async fn a_failing_extension_is_reported_and_left_out() {
     assert!(lease
         .tools()
         .await
+        .unwrap()
         .iter()
         .all(|tool| get_tool_owner(tool).as_deref() == Some("fixture")));
 }
@@ -1065,7 +1069,8 @@ async fn extension_manager_tools_follow_resource_support() {
         .await
         .unwrap()
         .tools_for("extensionmanager")
-        .await;
+        .await
+        .unwrap();
     assert!(tools
         .iter()
         .all(|tool| tool.name != "extensionmanager__list_resources"));
@@ -1089,7 +1094,8 @@ async fn extension_manager_tools_follow_resource_support() {
         .await
         .unwrap()
         .tools_for("extensionmanager")
-        .await;
+        .await
+        .unwrap();
     assert!(tools
         .iter()
         .any(|tool| tool.name == "extensionmanager__list_resources"));
@@ -1103,7 +1109,8 @@ async fn extension_manager_tools_follow_resource_support() {
         .await
         .unwrap()
         .tools_for("extensionmanager")
-        .await;
+        .await
+        .unwrap();
     assert!(tools
         .iter()
         .all(|tool| tool.name != "extensionmanager__list_resources"));
@@ -1150,6 +1157,7 @@ async fn extension_manager_resource_tools_use_the_calling_lease() {
     assert!(lease
         .tools()
         .await
+        .unwrap()
         .iter()
         .any(|tool| tool.name == "extensionmanager__read_resource"));
 
