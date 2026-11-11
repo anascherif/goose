@@ -1,10 +1,8 @@
 use super::ExtensionMutation;
 use super::*;
+use crate::agents::extension_config::ExtensionConfig;
 use futures::StreamExt;
-use goose_agent::extension::ExtensionConfig;
-use goose_agent::extension_manager::{
-    get_tool_owner, is_tool_owned_by_extension, CallRequest, ExtensionSet,
-};
+use goose_agent::extension_manager::{get_tool_owner, is_tool_owned_by_extension, CallRequest};
 use goose_agent::mcp_client::McpClientTrait;
 use goose_agent::tool_execution::{ToolCallContext, ToolCallNotificationEmitter};
 use goose_test_support::mcp::McpFixtureServer;
@@ -609,7 +607,9 @@ async fn resolve_replaces_a_slot_whose_config_changed() {
         .add_mock_extension("ext_a".to_string(), Arc::new(MockClient {}))
         .await;
 
-    let same = ExtensionSet::new("session", None, vec![builtin_config("ext_a", vec![])]).unwrap();
+    let same = extension_manager
+        .extension_set("session", None, vec![builtin_config("ext_a", vec![])], None)
+        .unwrap();
     assert!(!extension_manager
         .resolve(&same)
         .await
@@ -618,12 +618,14 @@ async fn resolve_replaces_a_slot_whose_config_changed() {
         .unwrap()
         .is_empty());
 
-    let narrower = ExtensionSet::new(
-        "session",
-        None,
-        vec![builtin_config("ext_a", vec!["tool".to_string()])],
-    )
-    .unwrap();
+    let narrower = extension_manager
+        .extension_set(
+            "session",
+            None,
+            vec![builtin_config("ext_a", vec!["tool".to_string()])],
+            None,
+        )
+        .unwrap();
     let lease = extension_manager.resolve(&narrower).await;
     assert!(lease.tools().await.unwrap().is_empty());
     let results = lease.start().await;
@@ -938,9 +940,9 @@ async fn a_provider_running_its_own_tool_loop_keeps_mcp_servers_out_of_the_lease
 
     assert_eq!(
         lease
-            .configs()
+            .registrations()
             .iter()
-            .map(ExtensionConfig::key)
+            .map(|registration| registration.key().to_string())
             .collect::<Vec<_>>(),
         vec!["todo"]
     );
@@ -1032,14 +1034,10 @@ async fn a_new_working_dir_is_used_by_the_next_session_lease() {
 
 #[test]
 fn set_rejects_the_same_extension_twice() {
-    let error = ExtensionSet::new(
-        "s",
-        None,
-        vec![
-            builtin_config("Ext-A", vec![]),
-            builtin_config("ext-a", vec![]),
-        ],
-    )
+    let error = crate::agents::extension_config::check_unique_keys(&[
+        builtin_config("Ext-A", vec![]),
+        builtin_config("ext-a", vec![]),
+    ])
     .unwrap_err();
     assert!(error.to_string().contains("appears twice"));
 }

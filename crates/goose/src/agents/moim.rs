@@ -167,7 +167,7 @@ fn turn_budget_part(turns_taken: u32, max_turns: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goose_agent::extension::ExtensionConfig;
+    use crate::agents::extension_config::ExtensionConfig;
     use goose_agent::extension_manager::ExtensionSet;
     use goose_agent::mcp_client::McpClientTrait;
     use goose_agent::tool_execution::ToolCallContext;

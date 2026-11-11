@@ -1,8 +1,7 @@
 use super::goose_host::GooseExtensionHost;
-use goose_agent::container::Container;
-use goose_agent::extension::name_to_key;
-use goose_agent::extension::{ExtensionError, ExtensionResult};
-use goose_agent::extension_manager::host::ExtensionHost;
+use crate::agents::extension_config::name_to_key;
+use crate::agents::extension_config::{ExtensionError, ExtensionResult};
+use crate::container::Container;
 use goose_agent::mcp_client::{ConnectContext, McpClient, McpClientTrait};
 
 pub(super) async fn connect(
@@ -16,8 +15,7 @@ pub(super) async fn connect(
         .ok_or_else(|| ExtensionError::ConfigError(format!("Unknown extension: {}", name)))?;
 
     if let Some(container) = container {
-        let mut ctx = ctx;
-        ctx.docker_container = Some(container.id().to_string());
+        let ctx = ctx;
         tracing::info!(
             container = %container.id(),
             builtin = %name,

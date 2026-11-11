@@ -1,9 +1,9 @@
+use crate::agents::extension_config::{Envs, ExtensionConfig, DEFAULT_EXTENSION_TIMEOUT};
 use crate::config::DEFAULT_EXTENSION_DESCRIPTION;
 use crate::plugins::discovery::discover_enabled_plugins;
 use crate::plugins::formats::open_plugins;
 use anyhow::{bail, Context, Result};
 use fs_err as fs;
-use goose_agent::extension::{Envs, ExtensionConfig, DEFAULT_EXTENSION_TIMEOUT};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -198,7 +198,7 @@ fn validate_servers(servers: HashMap<String, McpServerConfig>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goose_agent::extension::ExtensionConfig;
+    use crate::agents::extension_config::ExtensionConfig;
 
     #[test]
     fn loads_default_mcp_json_with_plugin_root_expansion() {

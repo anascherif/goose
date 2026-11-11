@@ -21,13 +21,13 @@ use super::base::{
     ConfigKey, MessageStream, PermissionRouting, Provider, ProviderDef, ProviderMetadata,
 };
 use super::utils::filter_extensions_from_system_prompt;
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{Message, MessageContent};
 use crate::permission::permission_confirmation::PrincipalType;
 use crate::permission::{Permission, PermissionConfirmation};
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::subprocess::configure_subprocess;
 use goose_providers::model::ModelConfig;
 
@@ -1040,8 +1040,8 @@ impl Provider for ClaudeCodeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::extension_config::Envs;
     use chrono::Utc;
-    use goose_agent::extension::Envs;
     use goose_test_support::session::TEST_SESSION_ID;
     use serde_json::json;
     use std::collections::HashMap;

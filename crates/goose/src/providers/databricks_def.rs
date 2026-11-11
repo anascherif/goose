@@ -9,9 +9,9 @@ use goose_providers::databricks_auth::{
 };
 use std::sync::Arc;
 
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::{Config, ConfigError};
 use crate::providers::base::ProviderDef;
-use goose_agent::extension::ExtensionConfig;
 
 pub struct DatabricksProviderDef;
 

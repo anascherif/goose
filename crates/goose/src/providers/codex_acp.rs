@@ -50,14 +50,14 @@ impl ProviderDef for CodexAcpProvider {
     const RUNS_OWN_TOOL_LOOP: bool = true;
 
     fn from_env(
-        extensions: Vec<goose_agent::extension::ExtensionConfig>,
+        extensions: Vec<crate::agents::extension_config::ExtensionConfig>,
         tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<AcpProvider>> {
         Self::from_env_with_working_dir(extensions, current_working_dir(), tls_config)
     }
 
     fn from_env_with_working_dir(
-        extensions: Vec<goose_agent::extension::ExtensionConfig>,
+        extensions: Vec<crate::agents::extension_config::ExtensionConfig>,
         working_dir: PathBuf,
         _tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<AcpProvider>> {

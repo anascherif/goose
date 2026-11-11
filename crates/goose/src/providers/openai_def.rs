@@ -43,7 +43,7 @@ impl ProviderDef for OpenAiProviderDef {
     type Provider = OpenAiProvider;
 
     fn from_env(
-        _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+        _extensions: Vec<crate::agents::extension_config::ExtensionConfig>,
         tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(from_env(tls_config))

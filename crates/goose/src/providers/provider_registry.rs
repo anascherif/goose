@@ -4,10 +4,10 @@ use super::base::{
     ProviderType,
 };
 use super::inventory::{InventoryIdentityInput, InventoryRegistration, InventoryResolvers};
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::DeclarativeProviderConfig;
 use anyhow::Result;
 use futures::future::BoxFuture;
-use goose_agent::extension::ExtensionConfig;
 use goose_providers::model::ModelConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;

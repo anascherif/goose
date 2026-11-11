@@ -189,35 +189,6 @@ pub enum ExtensionConfig {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         available_tools: Vec<String>,
     },
-    /// Built-in extension that is part of the bundled goose MCP server
-    #[serde(rename = "builtin")]
-    Builtin {
-        name: String,
-        #[serde(default)]
-        #[serde(deserialize_with = "deserialize_null_with_default")]
-        description: String,
-        display_name: Option<String>, // needed for the UI
-        timeout: Option<u64>,
-        #[serde(default)]
-        bundled: Option<bool>,
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        available_tools: Vec<String>,
-    },
-    /// Platform extensions that have direct access to the agent etc and run in the agent process
-    #[serde(rename = "platform")]
-    Platform {
-        name: String,
-        #[serde(default)]
-        #[serde(deserialize_with = "deserialize_null_with_default")]
-        description: String,
-        display_name: Option<String>,
-        #[serde(default)]
-        bundled: Option<bool>,
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        available_tools: Vec<String>,
-    },
     #[serde(rename = "streamable_http")]
     StreamableHttp {
         name: String,
@@ -266,19 +237,6 @@ pub enum ExtensionConfig {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         available_tools: Vec<String>,
     },
-}
-
-impl Default for ExtensionConfig {
-    fn default() -> Self {
-        Self::Builtin {
-            name: DEFAULT_EXTENSION.to_string(),
-            display_name: Some(DEFAULT_DISPLAY_NAME.to_string()),
-            description: "default".to_string(),
-            timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
-            bundled: Some(true),
-            available_tools: Vec::new(),
-        }
-    }
 }
 
 impl ExtensionConfig {
@@ -366,8 +324,6 @@ impl ExtensionConfig {
         match self {
             Self::StreamableHttp { name, .. } => name,
             Self::Stdio { name, .. } => name,
-            Self::Builtin { name, .. } => name,
-            Self::Platform { name, .. } => name,
         }
         .to_string()
     }
@@ -378,12 +334,6 @@ impl ExtensionConfig {
                 available_tools, ..
             }
             | Self::Stdio {
-                available_tools, ..
-            }
-            | Self::Builtin {
-                available_tools, ..
-            }
-            | Self::Platform {
                 available_tools, ..
             } => available_tools,
         };
@@ -465,7 +415,6 @@ impl ExtensionConfig {
                     available_tools,
                 })
             }
-            other => Ok(other),
         }
     }
 }
@@ -547,8 +496,6 @@ impl std::fmt::Display for ExtensionConfig {
             } => {
                 write!(f, "Stdio({}: {} {})", name, cmd, args.join(" "))
             }
-            ExtensionConfig::Builtin { name, .. } => write!(f, "Builtin({})", name),
-            ExtensionConfig::Platform { name, .. } => write!(f, "Platform({})", name),
         }
     }
 }
@@ -594,6 +541,17 @@ pub fn check_unique_keys(extensions: &[ExtensionConfig]) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use test_case::test_case;
+    #[test]
+    fn application_extension_kinds_are_not_transport_configs() {
+        for kind in ["builtin", "platform"] {
+            assert!(
+                serde_json::from_value::<ExtensionConfig>(serde_json::json!({
+                    "type": kind, "name": "developer"
+                }))
+                .is_err()
+            );
+        }
+    }
     #[test_case("Bearer ${ AUTH_TOKEN }", "Bearer secret123"; "braces_with_spaces")]
     #[test_case("Bearer ${AUTH_TOKEN}", "Bearer secret123"; "braces")]
     #[test_case("Bearer $AUTH_TOKEN", "Bearer secret123"; "bare")]

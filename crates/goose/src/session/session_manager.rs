@@ -1,5 +1,7 @@
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::paths::Paths;
 use crate::config::GooseMode;
+use crate::container::Container;
 use crate::conversation::message::{Message, MessageMetadata, MessageUsage, TokenState};
 use crate::conversation::Conversation;
 use crate::providers::base::{CostSource, Provider};
@@ -13,8 +15,6 @@ use crate::session::session_naming::{
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use futures::TryStreamExt;
-use goose_agent::container::Container;
-use goose_agent::extension::ExtensionConfig;
 use goose_providers::conversation::token_usage::Usage;
 use goose_providers::model::ModelConfig;
 use indexmap::IndexMap;

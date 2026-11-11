@@ -606,7 +606,7 @@ impl ProviderDef for MuseCodeProviderDef {
     type Provider = MuseCodeProvider;
 
     fn from_env(
-        _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+        _extensions: Vec<crate::agents::extension_config::ExtensionConfig>,
         tls_config: Option<TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(from_env(tls_config))

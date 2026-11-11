@@ -13,18 +13,17 @@ use rmcp::model::{
 use rmcp::object;
 use tokio_util::sync::CancellationToken;
 
+use goose::agents::extension_config::Envs;
+use goose::agents::extension_config::ExtensionConfig;
 use goose::agents::extension_manager::ExtensionManager;
 use goose::agents::GoosePlatform;
 use goose::config::GooseMode;
 use goose::conversation::message::ActionRequiredData;
 use goose::session::SessionType;
 use goose_agent::action_required_manager::ElicitationOutcome;
-use goose_agent::extension::Envs;
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::extension_manager::CallRequest;
 use goose_agent::extension_manager::ClientContext;
 use goose_agent::extension_manager::ExtensionLease;
-use goose_agent::extension_manager::ExtensionSet;
 use goose_agent::mcp_client::GooseMcpClientCapabilities;
 use goose_test_support::mcp::{ContextReport, APP_CARD_HTML, APP_CARD_RESOURCE_URI};
 use goose_test_support::{McpFixture, FAKE_CODE};
@@ -147,12 +146,15 @@ impl Fixture {
     ) -> ExtensionLease {
         self.manager
             .resolve(
-                &ExtensionSet::new(
-                    &session.id,
-                    Some(session.working_dir.clone()),
-                    configs.to_vec(),
-                )
-                .unwrap(),
+                &self
+                    .manager
+                    .extension_set(
+                        &session.id,
+                        Some(session.working_dir.clone()),
+                        configs.to_vec(),
+                        session.container.clone(),
+                    )
+                    .unwrap(),
             )
             .await
     }
@@ -596,7 +598,10 @@ async fn extension_lifecycle_across_real_transports(stdio_version: ProtocolVersi
         .await
         .contains("old workspace"));
 
-    assert!(ExtensionSet::new("s", None, vec![todo.clone(), platform("Todo")]).is_err());
+    assert!(
+        goose::agents::extension_config::check_unique_keys(&[todo.clone(), platform("Todo")])
+            .is_err()
+    );
 }
 
 /// Everything that crosses the wire besides a plain call: per-session tool
@@ -937,7 +942,12 @@ async fn test_replayed_session(
 
     #[allow(clippy::redundant_closure_call)]
     let result = (async || -> Result<(), Box<dyn std::error::Error>> {
-        let set = ExtensionSet::new("test-session-id", None, vec![extension_config])?;
+        let set = extension_manager.extension_set(
+            "test-session-id",
+            None,
+            vec![extension_config],
+            None,
+        )?;
         let mut results = Vec::new();
         for tool_call in tool_calls {
             let mut new_call = CallToolRequestParams::new(format!("test__{}", tool_call.name));

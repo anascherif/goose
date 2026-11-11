@@ -4,7 +4,6 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use super::host::ExtensionHost;
-use crate::container::Container;
 use crate::extension::{ExtensionError, ExtensionResult, ProcessExit};
 use crate::mcp_client::{ConnectContext, McpClient};
 use crate::subprocess::spawn_long_lived_mcp_subprocess;
@@ -13,17 +12,14 @@ pub(super) async fn connect(
     cmd: &str,
     args: &[String],
     envs: HashMap<String, String>,
-    container: Option<&Container>,
-    mut ctx: ConnectContext,
+    ctx: ConnectContext,
     host: &dyn ExtensionHost,
 ) -> ExtensionResult<McpClient> {
     #[cfg(feature = "extension-malware-check")]
     crate::extension_malware_check::deny_if_malicious_cmd_args(cmd, args).await?;
 
-    if let Some(container) = container {
-        ctx.docker_container = Some(container.id().to_string());
-    }
-    let command = host.stdio_command(cmd, args, envs, container)?;
+    let mut command = Command::new(host.resolve_command(cmd));
+    command.args(args).envs(envs);
     spawn(command, ctx, host).await
 }
 

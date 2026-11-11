@@ -4,9 +4,9 @@ use goose_providers::api_client::TlsConfig;
 use goose_providers::base::{ProviderDescriptor, ProviderMetadata};
 use goose_providers::google::{GoogleProvider, GOOGLE_API_HOST};
 
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::Config;
 use crate::providers::base::ProviderDef;
-use goose_agent::extension::ExtensionConfig;
 
 pub struct GoogleProviderDef;
 

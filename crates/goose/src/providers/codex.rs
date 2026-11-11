@@ -15,11 +15,11 @@ use tokio::process::Command;
 
 use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
 use super::utils::filter_extensions_from_system_prompt;
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{Message, MessageContent};
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::subprocess::configure_subprocess;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
@@ -741,7 +741,7 @@ impl Provider for CodexProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goose_agent::extension::Envs;
+    use crate::agents::extension_config::Envs;
     use goose_providers::base::ProviderDescriptor as _;
     use goose_test_support::TEST_IMAGE_B64;
     use std::collections::HashMap;

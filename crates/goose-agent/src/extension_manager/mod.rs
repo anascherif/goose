@@ -14,8 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::action_required_manager::ActionRequiredManager;
-use crate::container::Container;
-use crate::extension::{name_to_key, ExtensionConfig, ExtensionError, ExtensionResult};
+use crate::extension::{name_to_key, ExtensionError, ExtensionResult};
 use crate::mcp_client::{GooseMcpClientCapabilities, McpClientTrait};
 use host::{ExtensionHost, ExtensionSession};
 use rmcp::model::{CallToolResult, MetaObject, ServerConfig, Tool};
@@ -112,37 +111,28 @@ struct CachedTools {
 
 struct Placement {
     working_dir: PathBuf,
-    container: Option<Container>,
 }
 
 impl Placement {
-    fn for_registration(
-        registration: &Registration,
-        working_dir: Option<&Path>,
-        container: Option<&Container>,
-        host: &dyn ExtensionHost,
-    ) -> Option<Self> {
-        if !registration.is_placed(host) {
+    fn for_registration(registration: &Registration, working_dir: Option<&Path>) -> Option<Self> {
+        if !registration.placed {
             return None;
         }
         Some(Self {
             working_dir: Self::working_dir(working_dir),
-            container: container.cloned(),
         })
     }
 
     fn working_dir(working_dir: Option<&Path>) -> PathBuf {
         working_dir
             .map(Path::to_path_buf)
-            .or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     }
 }
 
 enum Runtime {
     Running(Arc<Extension>),
-    /// A platform extension the host cannot provide (no scheduler service,
-    /// say) declines rather than registering with no tools.
+    /// A connector can decline rather than register with no tools.
     Declined,
     Failed(String),
 }
@@ -150,7 +140,7 @@ enum Runtime {
 pub(super) struct ExtensionSlot {
     key: String,
     pub(super) registration: Registration,
-    /// In-process platform extensions take the directory from each call.
+    /// Trusted in-process connectors take the directory from each call.
     placement: Option<Placement>,
     scope_id: String,
     manager: Weak<ExtensionManager>,
@@ -164,7 +154,6 @@ impl ExtensionSlot {
         &self,
         registration: &Registration,
         working_dir: Option<&Path>,
-        container: Option<&Container>,
         client: &ClientContext,
     ) -> bool {
         if !self.registration.is_equivalent(registration) {
@@ -172,7 +161,6 @@ impl ExtensionSlot {
         }
         self.placement.as_ref().is_none_or(|placement| {
             working_dir.is_none_or(|working_dir| placement.working_dir == working_dir)
-                && placement.container.as_ref() == container
                 && self.client.negotiates_like(client)
         })
     }
@@ -282,8 +270,8 @@ impl Extension {
             .is_none_or(|info| info.capabilities.tools.is_some())
     }
 
-    pub(super) fn is_platform(&self) -> bool {
-        self.registration.platform
+    pub(super) fn is_trusted(&self) -> bool {
+        self.registration.trusted
     }
 
     /// The extension's tools as the model sees them: filtered by
@@ -588,8 +576,8 @@ impl ExtensionManager {
         )
     }
 
-    /// The registration a selected config resolves to.
-    pub(super) fn registration(&self, config: ExtensionConfig) -> Registration {
+    /// A registration for an external stdio or HTTP transport config.
+    pub fn registration(&self, config: crate::extension::ExtensionConfig) -> Registration {
         Registration::from_config(config, Arc::clone(&self.host))
     }
 
@@ -598,17 +586,11 @@ impl ExtensionManager {
         scope_id: &str,
         registration: Registration,
         working_dir: Option<&Path>,
-        container: Option<&Container>,
         client: Arc<ClientContext>,
     ) -> ExtensionSlot {
         ExtensionSlot {
             key: registration.key.clone(),
-            placement: Placement::for_registration(
-                &registration,
-                working_dir,
-                container,
-                self.host.as_ref(),
-            ),
+            placement: Placement::for_registration(&registration, working_dir),
             registration,
             scope_id: scope_id.to_string(),
             manager: Arc::downgrade(self),
@@ -625,19 +607,15 @@ impl ExtensionManager {
             let enabling = self.enabling.lock().await;
             let mut current = scopes.remove(set.scope_id()).unwrap_or_default();
             let mut selected = IndexMap::new();
-            for registration in set.registrations(self) {
+            for registration in set.registrations() {
                 let key = registration.key.clone();
                 let pending = enabling
                     .get(&(set.scope_id().to_string(), key.clone()))
                     .cloned();
                 let mut reusable = None;
                 for slot in current.swap_remove(&key).into_iter().chain(pending) {
-                    if slot.reusable_for(
-                        &registration,
-                        set.working_dir.as_deref(),
-                        set.container.as_ref(),
-                        &client,
-                    ) && slot.config_is_current().await
+                    if slot.reusable_for(&registration, set.working_dir.as_deref(), &client)
+                        && slot.config_is_current().await
                     {
                         reusable = Some(slot);
                         break;
@@ -648,7 +626,6 @@ impl ExtensionManager {
                         set.scope_id(),
                         registration,
                         set.working_dir.as_deref(),
-                        set.container.as_ref(),
                         Arc::clone(&client),
                     ))
                 });
@@ -687,20 +664,8 @@ impl ExtensionManager {
         let set = ExtensionSet::new(
             &session.id,
             Some(session.working_dir.clone()),
-            session
-                .extensions
-                .iter()
-                .filter(|config| {
-                    !(session.provider_runs_tool_loop
-                        && matches!(
-                            config,
-                            ExtensionConfig::Stdio { .. } | ExtensionConfig::StreamableHttp { .. }
-                        ))
-                })
-                .cloned()
-                .collect(),
-        )?
-        .with_container(session.container.clone());
+            session.extensions.clone(),
+        )?;
         Ok(self.resolve(&set).await)
     }
 
@@ -716,7 +681,6 @@ impl ExtensionManager {
             placement
                 .map(|placement| placement.working_dir.clone())
                 .unwrap_or_default(),
-            placement.and_then(|placement| placement.container.clone()),
             Arc::clone(client),
             self,
         );
@@ -741,8 +705,8 @@ impl ExtensionManager {
             .map_err(|error| ExtensionError::SetupError(error.to_string()))
     }
 
-    async fn select(&self, session_id: &str, config: ExtensionConfig) -> ExtensionResult<()> {
-        self.host.select(session_id, config).await
+    async fn select(&self, session_id: &str, registration: Registration) -> ExtensionResult<()> {
+        self.host.select(session_id, registration).await
     }
 
     /// Start the extension and select it for the session. It is started here
@@ -752,12 +716,11 @@ impl ExtensionManager {
     pub async fn enable(
         self: &Arc<Self>,
         session_id: &str,
-        config: ExtensionConfig,
+        registration: Registration,
     ) -> ExtensionResult<()> {
         let session = self.session(session_id).await?;
         let client = self.client(session_id);
-        let registration = self.registration(config.clone());
-        let pending_key = (session_id.to_string(), config.key());
+        let pending_key = (session_id.to_string(), registration.key.clone());
         let slot = {
             let scopes = self.scopes.lock().await;
             let mut enabling = self.enabling.lock().await;
@@ -772,12 +735,8 @@ impl ExtensionManager {
                 .into_iter()
                 .chain(selected)
             {
-                if slot.reusable_for(
-                    &registration,
-                    Some(&session.working_dir),
-                    session.container.as_ref(),
-                    &client,
-                ) && slot.config_is_current().await
+                if slot.reusable_for(&registration, Some(&session.working_dir), &client)
+                    && slot.config_is_current().await
                     && !matches!(slot.runtime.get(), Some(Runtime::Failed(_)))
                 {
                     reusable = Some(slot);
@@ -787,9 +746,8 @@ impl ExtensionManager {
             let slot = reusable.unwrap_or_else(|| {
                 Arc::new(self.new_slot(
                     session_id,
-                    registration,
+                    registration.clone(),
                     Some(&session.working_dir),
-                    session.container.as_ref(),
                     client,
                 ))
             });
@@ -798,7 +756,7 @@ impl ExtensionManager {
         };
         let result = match slot.runtime().await {
             Runtime::Failed(error) => Err(ExtensionError::StartFailed(error.clone())),
-            Runtime::Running(_) | Runtime::Declined => self.select(session_id, config).await,
+            Runtime::Running(_) | Runtime::Declined => self.select(session_id, registration).await,
         };
         let mut scopes = self.scopes.lock().await;
         let mut enabling = self.enabling.lock().await;
@@ -833,13 +791,13 @@ impl ExtensionManager {
     pub async fn add_client(
         &self,
         session_id: &str,
-        config: ExtensionConfig,
+        registration: Registration,
         client: McpClientBox,
         info: Option<ServerConfig>,
     ) {
-        self.install_client(session_id, config.clone(), client, info)
+        self.install_client(session_id, registration.clone(), client, info)
             .await;
-        if let Err(error) = self.select(session_id, config).await {
+        if let Err(error) = self.select(session_id, registration).await {
             warn!(%error, "failed to select injected extension");
         }
     }
@@ -847,13 +805,12 @@ impl ExtensionManager {
     pub async fn install_client(
         &self,
         session_id: &str,
-        config: ExtensionConfig,
+        registration: Registration,
         client: McpClientBox,
         info: Option<ServerConfig>,
     ) {
-        let key = config.key();
+        let key = registration.key.clone();
         let negotiation = self.client(session_id);
-        let registration = self.registration(config);
         self.install(
             session_id,
             ExtensionSlot {
@@ -889,16 +846,16 @@ impl ExtensionManager {
             .remove(session_id);
     }
 
-    pub async fn get_extension_configs(&self, session_id: &str) -> Result<Vec<ExtensionConfig>> {
+    pub async fn get_registrations(&self, session_id: &str) -> Result<Vec<Registration>> {
         Ok(self.host.session(session_id).await?.extensions)
     }
 
     pub async fn list_extensions(&self, session_id: &str) -> Result<Vec<String>> {
         Ok(self
-            .get_extension_configs(session_id)
+            .get_registrations(session_id)
             .await?
             .iter()
-            .map(ExtensionConfig::key)
+            .map(|r| r.key.clone())
             .collect())
     }
 

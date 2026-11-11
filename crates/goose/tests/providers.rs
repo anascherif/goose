@@ -2,6 +2,7 @@ use anyhow::Result;
 use dotenvy::dotenv;
 use futures::StreamExt;
 use goose::acp::ACP_CURRENT_MODEL;
+use goose::agents::extension_config::ExtensionConfig;
 use goose::agents::{
     AgentEvent, GoosePlatform, PromptManager, SessionConfig, StateMachineServices,
     StateMachineServicesConfig,
@@ -25,7 +26,6 @@ use goose::providers::sagemaker_tgi::SAGEMAKER_TGI_DEFAULT_MODEL;
 use goose::providers::snowflake::SNOWFLAKE_DEFAULT_MODEL;
 use goose::providers::xai::XAI_DEFAULT_MODEL;
 use goose::session::{SessionManager, SessionType};
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::extension_manager::CallRequest;
 use goose_providers::databricks::DATABRICKS_DEFAULT_MODEL;
 use goose_providers::errors::ProviderError;

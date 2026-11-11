@@ -36,8 +36,8 @@ impl ToolInfo {
 
 #[cfg(test)]
 mod tests {
+    use crate::agents::extension_config::{Envs, ExtensionConfig};
     use crate::config;
-    use goose_agent::extension::{Envs, ExtensionConfig};
     use test_case::test_case;
 
     #[test]

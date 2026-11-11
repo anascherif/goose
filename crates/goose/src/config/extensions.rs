@@ -1,6 +1,6 @@
 use super::base::Config;
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::platform_extensions::PLATFORM_EXTENSIONS;
-use goose_agent::extension::ExtensionConfig;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Mapping;
@@ -16,7 +16,7 @@ pub struct ExtensionEntry {
     pub config: ExtensionConfig,
 }
 
-use goose_agent::extension::name_to_key;
+use crate::agents::extension_config::name_to_key;
 
 pub(crate) fn is_extension_available(config: &ExtensionConfig) -> bool {
     match config {

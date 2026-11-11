@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures::StreamExt;
+use goose::agents::extension_config::ExtensionConfig;
 use goose::agents::{AgentEvent, GoosePlatform, StateMachineServices, StateMachineServicesConfig};
 use goose::config::extensions::{set_extension, ExtensionEntry};
-use goose_agent::extension::ExtensionConfig;
 
 #[cfg(test)]
 mod tests {
@@ -504,7 +504,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 Box::pin(async { Ok(Self::new()) })
@@ -670,7 +670,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 Box::pin(async { Ok(Self::new()) })
@@ -1023,7 +1023,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 unimplemented!()
@@ -1298,7 +1298,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 unimplemented!()
@@ -1497,7 +1497,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 unimplemented!()
@@ -1663,7 +1663,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 Box::pin(async { Ok(Self::new()) })
@@ -2344,7 +2344,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 unimplemented!()
@@ -2415,7 +2415,7 @@ mod tests {
             type Provider = Self;
 
             fn from_env(
-                _extensions: Vec<goose_agent::extension::ExtensionConfig>,
+                _extensions: Vec<goose::agents::extension_config::ExtensionConfig>,
                 _tls_config: Option<goose::providers::api_client::TlsConfig>,
             ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
                 unimplemented!()

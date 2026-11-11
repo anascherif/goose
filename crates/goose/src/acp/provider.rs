@@ -33,6 +33,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt 
 
 use crate::acp::handoff::{build_handoff_context_memo, memo_token_budget, prompt_token_cost};
 use crate::acp::{map_permission_response, PermissionDecision};
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{Message, MessageContent, TOOL_META_EXTERNAL_DISPATCH_KEY};
 use crate::permission::permission_confirmation::PrincipalType;
@@ -40,7 +41,6 @@ use crate::permission::{Permission, PermissionConfirmation};
 use crate::providers::base::{MessageStream, PermissionRouting, Provider};
 use crate::token_counter::create_token_counter;
 use crate::utils::sanitize_unicode_tags;
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::subprocess::configure_subprocess;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
@@ -2396,11 +2396,11 @@ fn permission_decision_from_mode(goose_mode: GooseMode) -> Option<PermissionDeci
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::extension_config::Envs;
     use agent_client_protocol::schema::v1::{
         ConfigOptionUpdate, ErrorCode, SessionConfigSelectGroup, SessionConfigSelectOption,
         SessionMode, SessionModeId,
     };
-    use goose_agent::extension::Envs;
 
     use test_case::test_case;
 

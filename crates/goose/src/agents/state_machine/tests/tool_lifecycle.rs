@@ -717,7 +717,7 @@ async fn a_pinned_provider_running_its_own_tool_loop_keeps_mcp_servers_out_of_go
     pipeline
         .session_manager
         .update_enabled_extensions(&pipeline.session_id, |selected| {
-            selected.push(goose_agent::extension::ExtensionConfig::stdio(
+            selected.push(crate::agents::extension_config::ExtensionConfig::stdio(
                 "remote",
                 "missing-binary",
                 "",

@@ -733,7 +733,7 @@ mod tests {
                 protocol_version: None,
             },
             working_dir: working_dir.to_path_buf(),
-            docker_container: None,
+
             action_required: Arc::new(ActionRequiredManager::new()),
             tools_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             trace_context: None,

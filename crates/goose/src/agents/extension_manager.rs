@@ -4,13 +4,14 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use super::provider_manager::ProviderManager;
+use crate::agents::extension_config::name_to_key;
 use crate::agents::platform_extensions::{PlatformExtensionContext, PLATFORM_EXTENSIONS};
 use crate::session::{EnabledExtensionsState, Session};
-use goose_agent::extension::name_to_key;
 
 mod apps;
 mod builtin;
 mod goose_host;
+mod registration;
 pub use apps::TRUSTED_TOOL_UPDATE_META_KEY;
 mod mutation;
 use super::GoosePlatform;
@@ -55,6 +56,100 @@ impl ExtensionManager {
                 .with_startup_policy(goose_agent::extension_manager::StartupPolicy::BestEffort),
         );
         Self { manager, context }
+    }
+
+    fn host(&self) -> Arc<goose_host::GooseExtensionHost> {
+        Arc::new(goose_host::GooseExtensionHost {
+            context: self.context.clone(),
+        })
+    }
+
+    pub fn extension_set(
+        &self,
+        scope: &str,
+        cwd: Option<PathBuf>,
+        configs: Vec<crate::agents::extension_config::ExtensionConfig>,
+        container: Option<crate::container::Container>,
+    ) -> Result<goose_agent::extension_manager::ExtensionSet> {
+        crate::agents::extension_config::check_unique_keys(&configs)?;
+        Ok(goose_agent::extension_manager::ExtensionSet::new(
+            scope,
+            cwd,
+            configs
+                .into_iter()
+                .map(|config| registration::registration(config, container.clone(), self.host()))
+                .collect(),
+        )?)
+    }
+
+    pub async fn enable(
+        &self,
+        scope: &str,
+        config: crate::agents::extension_config::ExtensionConfig,
+    ) -> crate::agents::extension_config::ExtensionResult<()> {
+        let session = self
+            .context
+            .session_manager
+            .get_session(scope, false)
+            .await
+            .map_err(|e| {
+                crate::agents::extension_config::ExtensionError::SetupError(e.to_string())
+            })?;
+        self.manager
+            .enable(
+                scope,
+                registration::registration(config, session.container, self.host()),
+            )
+            .await
+    }
+
+    pub async fn get_extension_configs(
+        &self,
+        scope: &str,
+    ) -> Result<Vec<crate::agents::extension_config::ExtensionConfig>> {
+        let session = self
+            .context
+            .session_manager
+            .get_session(scope, false)
+            .await?;
+        Ok(
+            EnabledExtensionsState::from_extension_data(&session.extension_data)
+                .map(|state| state.extensions)
+                .unwrap_or_default(),
+        )
+    }
+
+    pub async fn add_client(
+        &self,
+        scope: &str,
+        config: crate::agents::extension_config::ExtensionConfig,
+        client: Arc<dyn goose_agent::mcp_client::McpClientTrait>,
+        info: Option<rmcp::model::ServerConfig>,
+    ) {
+        self.manager
+            .add_client(
+                scope,
+                registration::registration(config, None, self.host()),
+                client,
+                info,
+            )
+            .await;
+    }
+    pub async fn install_client(
+        &self,
+        scope: &str,
+        config: crate::agents::extension_config::ExtensionConfig,
+        client: Arc<dyn goose_agent::mcp_client::McpClientTrait>,
+        info: Option<rmcp::model::ServerConfig>,
+    ) {
+        self.manager
+            .install_client(
+                scope,
+                registration::registration(config, None, self.host()),
+                client,
+                info,
+            )
+            .await;
     }
 
     pub fn with_data_dir(data_dir: PathBuf) -> Self {

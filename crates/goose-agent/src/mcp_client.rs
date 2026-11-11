@@ -520,7 +520,6 @@ pub struct ConnectContext {
     pub client_version: &'static str,
     pub capabilities: GooseMcpClientCapabilities,
     pub working_dir: PathBuf,
-    pub docker_container: Option<String>,
     pub action_required: Arc<ActionRequiredManager>,
     pub tools_version: Arc<AtomicU64>,
     pub trace_context: Option<TraceContextInjector>,
@@ -534,7 +533,6 @@ pub struct McpClient {
     notification_subscribers: Arc<Mutex<Vec<mpsc::Sender<ServerNotification>>>>,
     server_info: Option<InitializeResult>,
     timeout: std::time::Duration,
-    docker_container: Option<String>,
     trace_context: Option<TraceContextInjector>,
 }
 
@@ -553,7 +551,6 @@ impl McpClient {
             client_version,
             capabilities,
             working_dir,
-            docker_container,
             action_required,
             tools_version,
             trace_context,
@@ -610,13 +607,8 @@ impl McpClient {
             notification_subscribers,
             server_info,
             timeout,
-            docker_container,
             trace_context,
         })
-    }
-
-    pub fn docker_container(&self) -> Option<&str> {
-        self.docker_container.as_deref()
     }
 
     async fn send_request_with_context(

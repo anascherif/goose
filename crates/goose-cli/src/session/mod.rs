@@ -36,12 +36,12 @@ use goose::utils::safe_truncate;
 
 use anyhow::Result;
 use completion::GooseCompleter;
+use goose::agents::extension_config::{name_to_key, Envs, ExtensionConfig};
 use goose::agents::platform_extensions::PLATFORM_EXTENSIONS;
 use goose::agents::{
     context_management_unsupported_message, SessionConfig, StateMachineServices, COMPACT_TRIGGERS,
 };
 use goose::config::{Config, GooseMode};
-use goose_agent::extension::{name_to_key, Envs, ExtensionConfig};
 use input::InputResult;
 use rmcp::model::ServerNotification;
 use rmcp::model::{ElicitationAction, PromptMessage};
@@ -382,7 +382,7 @@ impl CliSession {
             envs: Envs::new(envs),
             env_keys: Vec::new(),
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
-            timeout: Some(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT),
+            timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
             cwd: None,
             bundled: None,
             available_tools: Vec::new(),
@@ -480,7 +480,7 @@ impl CliSession {
     pub async fn add_streamable_http_extension(&mut self, extension_url: String) -> Result<()> {
         let config = Self::parse_streamable_http_extension(
             &extension_url,
-            goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT,
+            goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT,
         );
         self.add_and_persist_extensions(vec![config]).await
     }
@@ -2790,9 +2790,9 @@ fn build_switched_model_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use goose::agents::extension_config::{Envs, ExtensionConfig};
     use goose::conversation::message::MessageErrorKind;
     use goose::providers::base::Provider;
-    use goose_agent::extension::{Envs, ExtensionConfig};
     use serde_json::json;
     use std::collections::HashMap;
     use std::time::Duration;
@@ -2932,7 +2932,7 @@ mod tests {
             envs: Envs::default(),
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
-            timeout: Some(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT),
+            timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
             cwd: None,
             bundled: None,
             available_tools: vec![],
@@ -2948,7 +2948,7 @@ mod tests {
             envs: Envs::new([("MY_SECRET".into(), "s3cret".into())].into()),
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
-            timeout: Some(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT),
+            timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
             cwd: None,
             bundled: None,
             available_tools: vec![],
@@ -2964,7 +2964,7 @@ mod tests {
             envs: Envs::default(),
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
-            timeout: Some(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT),
+            timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
             cwd: None,
             bundled: None,
             available_tools: vec![],

@@ -196,15 +196,14 @@ discovery is not a secure file-open API.
 ## Extension runtime
 
 On native targets, `extension_manager` owns extension slots, leases, tool
-catalogs, dispatch, and MCP transports. Its supporting configuration, MCP client,
-container, tool-call, elicitation, malware-checking, and subprocess types live in
+catalogs, dispatch, and MCP transports. Its supporting transport configuration,
+MCP client, tool-call, elicitation, malware-checking, and subprocess types live in
 this crate too. Consumers import the moved types directly from `goose_agent`.
 
 The extraction preserves the runtime's behavior, with these necessary boundaries:
 
 - `ExtensionHost` supplies session selection/persistence, config resolution,
-  config generation, in-process factories, application-extension connections, command placement,
-  command search paths, and host identity.
+  config generation, command search paths, and host identity.
   `goose` implements it using its existing application services and retains a
   thin manager adapter for application constructors, client defaults, and session snapshots.
   Per-session client negotiation and config-generation invalidation remain in the runtime.
@@ -217,9 +216,15 @@ The extraction preserves the runtime's behavior, with these necessary boundaries
 - A trace-context callback preserves application telemetry without making this
   crate depend on Goose's OpenTelemetry setup. The host also supplies its version
   so MCP identity and HTTP user-agent headers retain the application's version.
-- Platform extension registration and application-specific types such as
-  `ToolInfo` remain in `goose`. Its recipe DTO conversions are functions rather
-  than foreign-trait impls because `ExtensionConfig` now belongs to this crate.
+- `ExtensionSet` and session selection contain `Registration`s, not application
+  configs. Goose owns its persisted `ExtensionConfig` (including builtin/platform
+  variants), container placement, registry lookup, and config-to-registration
+  conversion. The GDK's transport `ExtensionConfig` accepts only stdio and HTTP;
+  `manager.registration(config)` constructs a registration for those transports.
+- Registrations carry connector revisions, tool filters, and optional opaque host
+  metadata. Goose uses that metadata to persist its unchanged config schema.
+  Trusted in-process registrations can preserve host-reserved result metadata and
+  opt out of working-directory restarts; external registrations cannot.
 
 Goose's mutation commands, private MCP App result attachments, and resource-tool
 visibility rules live in its adapter. `ExtensionHost::exposes_tool` filters the
@@ -235,9 +240,9 @@ Transports are opt-in Cargo features (native only):
 
 A config whose transport is not enabled fails to start with a configuration error.
 In-process extensions need no transport feature. Builtin registries and Docker
-command construction live in goose; the runtime supervises the command returned
-by `ExtensionHost::stdio_command`, or calls `connect_builtin` for application
-extensions. `ConnectContext` and `McpClient::connect` are public for those factories.
+command construction live in goose's connectors. The runtime has no container
+placement or builtin/platform callback API. `spawn_stdio`, `ConnectContext`, and
+`McpClient::connect` support custom connectors without a second runtime.
 
 `ExtensionHost` requires only `action_required`. The defaults suit a host that
 resolves its own `ExtensionSet`s and does not change selections at runtime:

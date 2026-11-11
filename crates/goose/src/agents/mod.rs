@@ -2,6 +2,7 @@ mod active_run;
 pub mod context_report;
 pub mod execute_commands;
 pub mod extension;
+pub mod extension_config;
 pub mod extension_manager;
 pub mod final_output_tool;
 pub(crate) mod gen_ai_telemetry;

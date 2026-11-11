@@ -4,6 +4,7 @@ use chrono::Utc;
 use indexmap::IndexMap;
 use serde::Serialize;
 
+use crate::agents::extension_config::ExtensionInfo;
 use crate::agents::moim;
 use crate::hints::load_hints::build_gitignore;
 use crate::hints::{get_context_filenames, load_hint_files};
@@ -13,7 +14,6 @@ use crate::{
     prompt_template,
     utils::sanitize_unicode_tags,
 };
-use goose_agent::extension::ExtensionInfo;
 use std::path::Path;
 
 pub struct PromptManager {

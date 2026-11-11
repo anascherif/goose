@@ -34,6 +34,7 @@ use super::{
     xai::XaiProvider,
     xai_oauth::XaiOAuthProvider,
 };
+use crate::agents::extension_config::ExtensionConfig;
 use crate::providers::anthropic_def::AnthropicProviderDef;
 use crate::providers::azure_foundry_def::AzureFoundryProviderDef;
 use crate::providers::base::ProviderType;
@@ -49,7 +50,6 @@ use crate::{
     providers::provider_registry::ProviderEntry,
 };
 use anyhow::Result;
-use goose_agent::extension::ExtensionConfig;
 use tokio::sync::OnceCell;
 
 static REGISTRY: OnceCell<RwLock<ProviderRegistry>> = OnceCell::const_new();

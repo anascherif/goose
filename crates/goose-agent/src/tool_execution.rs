@@ -5,7 +5,6 @@ use tokio::sync::mpsc;
 
 use std::path::PathBuf;
 
-use crate::container::Container;
 use crate::extension_manager::ExtensionLease;
 use goose_provider_types::conversation::message::Message;
 use rmcp::model::ServerNotification;
@@ -34,7 +33,6 @@ pub struct ToolCallContext {
     pub session_id: String,
     pub working_dir: Option<PathBuf>,
     pub tool_call_request_id: Option<String>,
-    container: Option<Container>,
     extension_lease: Option<Arc<ExtensionLease>>,
     notification_emitter: Option<ToolCallNotificationEmitter>,
 }
@@ -49,19 +47,9 @@ impl ToolCallContext {
             session_id,
             working_dir,
             tool_call_request_id,
-            container: None,
             extension_lease: None,
             notification_emitter: None,
         }
-    }
-
-    pub fn with_container(mut self, container: Option<Container>) -> Self {
-        self.container = container;
-        self
-    }
-
-    pub fn container(&self) -> Option<&Container> {
-        self.container.as_ref()
     }
 
     pub fn with_extension_lease(mut self, extension_lease: Arc<ExtensionLease>) -> Self {

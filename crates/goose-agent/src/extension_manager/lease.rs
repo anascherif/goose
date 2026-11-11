@@ -24,13 +24,12 @@ use tracing::warn;
 use super::host::ExtensionHost;
 use super::{
     get_tool_owner, recover_mangled_tool_name, remove_reserved_meta, ActionRequiredStream,
-    ClientContext, Extension, ExtensionLoadResult, ExtensionManager, ExtensionSlot, Registration,
-    StartupPolicy, TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
+    ClientContext, Extension, ExtensionLoadResult, ExtensionSlot, Registration, StartupPolicy,
+    TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
 };
 use crate::action_required_manager::ActionRequiredManager;
-use crate::container::Container;
 use crate::extension::name_to_key;
-use crate::extension::{ExtensionConfig, ExtensionError, ExtensionInfo};
+use crate::extension::{ExtensionError, ExtensionInfo};
 use crate::mcp_client::McpClientTrait;
 use crate::tool_execution::{ToolCallContext, ToolCallNotificationEmitter, ToolCallResult};
 use crate::tool_visibility::is_tool_visible_to_app;
@@ -53,73 +52,48 @@ fn require_str_parameter<'a>(value: &'a Value, name: &str) -> Result<&'a str, Er
     })
 }
 
-/// One selected extension: a config the manager connects, or a host registration.
-#[derive(Debug)]
-enum Selected {
-    Config(ExtensionConfig),
-    Registration(Registration),
-}
-
 #[derive(Debug)]
 pub struct ExtensionSet {
     scope_id: String,
     pub(super) working_dir: Option<PathBuf>,
-    pub(super) container: Option<Container>,
-    extensions: Vec<Selected>,
+    extensions: Vec<Registration>,
 }
-
 impl ExtensionSet {
     pub fn new(
         scope_id: impl Into<String>,
         working_dir: Option<PathBuf>,
-        extensions: Vec<ExtensionConfig>,
+        extensions: Vec<Registration>,
     ) -> Result<Self, ExtensionError> {
-        crate::extension::check_unique_keys(&extensions)
-            .map_err(|error| ExtensionError::ConfigError(error.to_string()))?;
+        let mut keys = std::collections::HashSet::new();
+        for registration in &extensions {
+            if registration.key.is_empty() || !keys.insert(registration.key.clone()) {
+                return Err(ExtensionError::ConfigError(format!(
+                    "empty or duplicate extension key: {}",
+                    registration.key
+                )));
+            }
+        }
         Ok(Self {
             scope_id: scope_id.into(),
             working_dir,
-            container: None,
-            extensions: extensions.into_iter().map(Selected::Config).collect(),
+            extensions,
         })
     }
-
-    /// Select a host registration after the configs, rejecting a duplicate key.
     pub fn with_registration(mut self, registration: Registration) -> Result<Self, ExtensionError> {
-        if self.keys().any(|key| key == registration.key) {
+        if self.extensions.iter().any(|r| r.key == registration.key) {
             return Err(ExtensionError::ConfigError(format!(
                 "duplicate extension key: {}",
                 registration.key
             )));
         }
-        self.extensions.push(Selected::Registration(registration));
+        self.extensions.push(registration);
         Ok(self)
     }
-
-    fn keys(&self) -> impl Iterator<Item = String> + '_ {
-        self.extensions.iter().map(|selected| match selected {
-            Selected::Config(config) => config.key(),
-            Selected::Registration(registration) => registration.key.clone(),
-        })
-    }
-
-    pub fn with_container(mut self, container: Option<Container>) -> Self {
-        self.container = container;
-        self
-    }
-
     pub fn scope_id(&self) -> &str {
         &self.scope_id
     }
-
-    pub(super) fn registrations<'a>(
-        &'a self,
-        manager: &'a ExtensionManager,
-    ) -> impl Iterator<Item = Registration> + 'a {
-        self.extensions.iter().map(|selected| match selected {
-            Selected::Config(config) => manager.registration(config.clone()),
-            Selected::Registration(registration) => registration.clone(),
-        })
+    pub fn registrations(&self) -> impl Iterator<Item = Registration> + '_ {
+        self.extensions.iter().cloned()
     }
 }
 
@@ -360,8 +334,8 @@ impl ExtensionLease {
         self.tools_where(|extension| extension.key != key).await
     }
 
-    pub async fn non_platform_tools(&self) -> anyhow::Result<Vec<Tool>> {
-        self.tools_where(|extension| !extension.is_platform()).await
+    pub async fn untrusted_tools(&self) -> anyhow::Result<Vec<Tool>> {
+        self.tools_where(|extension| !extension.is_trusted()).await
     }
 
     async fn tools_where(
@@ -383,11 +357,10 @@ impl ExtensionLease {
         self.slots.iter().any(|slot| slot.key == key)
     }
 
-    /// The configs of config-backed extensions, in selection order.
-    pub fn configs(&self) -> Vec<ExtensionConfig> {
+    pub fn registrations(&self) -> Vec<Registration> {
         self.slots
             .iter()
-            .filter_map(|slot| slot.registration.config.clone())
+            .map(|slot| slot.registration.clone())
             .collect()
     }
 
@@ -665,7 +638,7 @@ impl ExtensionLease {
             .start_extensions()
             .await
             .iter()
-            .filter(|extension| extension.is_platform())
+            .filter(|extension| extension.is_trusted())
         {
             let tools = self
                 .tools_excluding(&extension.key)
@@ -782,7 +755,6 @@ impl ExtensionLease {
         let CallRequest {
             tool_call_id,
             notification_emitter,
-            container,
         } = request;
         let client = resolved.extension.client.clone();
         let action_required_stream = self.action_required_stream(tool_call_id.as_deref()).await;
@@ -796,7 +768,6 @@ impl ExtensionLease {
             self.working_dir.clone(),
             tool_call_id,
         )
-        .with_container(container)
         .with_extension_lease(Arc::new(self.clone()));
         let call_context = match emitter {
             Some(emitter) => call_context.with_notification_emitter(emitter),
@@ -808,7 +779,7 @@ impl ExtensionLease {
         let client_context = Arc::clone(&self.client_context);
         let host = Arc::clone(&self.host);
         let server_name = resolved.server_name.to_string();
-        let reserved_meta = if resolved.extension.is_platform() {
+        let reserved_meta = if resolved.extension.is_trusted() {
             &[]
         } else {
             self.host.reserved_result_meta_keys()
@@ -901,7 +872,6 @@ impl ExtensionLease {
 pub struct CallRequest {
     pub(crate) tool_call_id: Option<String>,
     pub(crate) notification_emitter: Option<ToolCallNotificationEmitter>,
-    pub(crate) container: Option<Container>,
 }
 
 impl CallRequest {
@@ -911,11 +881,6 @@ impl CallRequest {
             ..Default::default()
         }
     }
-
-    pub fn with_container(mut self, container: Option<Container>) -> Self {
-        self.container = container;
-        self
-    }
 }
 
 impl From<&ToolCallContext> for CallRequest {
@@ -923,7 +888,6 @@ impl From<&ToolCallContext> for CallRequest {
         Self {
             tool_call_id: ctx.tool_call_request_id.clone(),
             notification_emitter: ctx.notification_emitter().cloned(),
-            container: ctx.container().cloned(),
         }
     }
 }

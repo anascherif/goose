@@ -62,7 +62,7 @@ const DEFAULT_RESUME_INSTRUCTIONS: &str = "Continue the task from where you left
 struct SubagentConfig {
     provider_name: String,
     model_config: goose_providers::model::ModelConfig,
-    extensions: Vec<goose_agent::extension::ExtensionConfig>,
+    extensions: Vec<crate::agents::extension_config::ExtensionConfig>,
     working_dir: PathBuf,
     max_turns: usize,
 }

@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::calculator_extension::CalculatorExtension;
 use super::dummy_api::{DummyApi, ProviderFeatures};
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::state_machine::{
     messages_since_kickoff, Emitter, GooseEffect, Operation, RunStatus, StateMachine,
 };
@@ -22,7 +23,6 @@ use crate::providers::base::Provider;
 use crate::session::extension_data::EnabledExtensionsState;
 use crate::session::{GoalState, Session, SessionManager, SessionType};
 use goose_agent::action_required_manager::ElicitationOutcome;
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::extension_manager::TurnLease;
 use goose_agent::mcp_client::McpClientTrait;
 use goose_providers::model::ModelConfig;
@@ -616,9 +616,9 @@ impl TestPipeline {
             .extension_manager
             .current_lease(&self.session_id)
             .await?
-            .configs()
+            .registrations()
             .iter()
-            .map(ExtensionConfig::key)
+            .map(|registration| registration.key().to_string())
             .collect())
     }
 

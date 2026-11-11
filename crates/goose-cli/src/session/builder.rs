@@ -5,18 +5,18 @@ use super::{
     derive_extension_name_from_command, session_provider, split_extension_name_prefix, CliSession,
 };
 use console::style;
+use goose::agents::extension_config::name_to_key;
+use goose::agents::extension_config::ExtensionConfig;
+use goose::agents::extension_config::ExtensionError;
 use goose::agents::final_output_tool::FinalOutputTool;
 use goose::agents::{StateMachineServices, StateMachineServicesConfig};
 use goose::config::resolve_extensions_for_new_session;
 use goose::config::{Config, GooseMode};
+use goose::container::Container;
 use goose::model_config::model_config_from_user_config;
 use goose::recipe::Recipe;
 use goose::session::session_manager::SessionType;
 use goose::session::{EnabledExtensionsState, SessionManager};
-use goose_agent::container::Container;
-use goose_agent::extension::name_to_key;
-use goose_agent::extension::ExtensionConfig;
-use goose_agent::extension::ExtensionError;
 use rustyline::EditMode;
 use std::collections::{HashMap, HashSet};
 use std::process;
@@ -1120,7 +1120,7 @@ mod tests {
             extensions: vec!["echo test".to_string()],
             streamable_http_extensions: vec![StreamableHttpOptions {
                 url: "http://localhost:8080/mcp".to_string(),
-                timeout: goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT,
+                timeout: goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT,
             }],
             builtins: vec!["developer".to_string()],
             no_profile: false,

@@ -15,7 +15,6 @@ use super::stdio;
 #[cfg(feature = "mcp-http")]
 use super::streamable_http;
 use super::{host::ExtensionHost, ClientContext, ExtensionManager};
-use crate::container::Container;
 use crate::extension::{name_to_key, ExtensionConfig, ExtensionResult};
 use crate::mcp_client::{ConnectContext, McpClientTrait};
 
@@ -42,25 +41,22 @@ pub struct ConnectRequest {
     pub scope_id: String,
     /// The scope's working directory (or the process's, if it has none).
     pub working_dir: PathBuf,
-    pub container: Option<Container>,
     pub client: Arc<ClientContext>,
     tools_version: Arc<AtomicU64>,
     host: Arc<dyn ExtensionHost>,
-    manager: Weak<ExtensionManager>,
+    pub manager: Weak<ExtensionManager>,
 }
 
 impl ConnectRequest {
     pub(super) fn new(
         scope_id: &str,
         working_dir: PathBuf,
-        container: Option<Container>,
         client: Arc<ClientContext>,
         manager: &Arc<ExtensionManager>,
     ) -> Self {
         Self {
             scope_id: scope_id.to_string(),
             working_dir,
-            container,
             client,
             tools_version: Arc::new(AtomicU64::new(0)),
             host: Arc::clone(&manager.host),
@@ -74,18 +70,14 @@ impl ConnectRequest {
         Arc::clone(&self.tools_version)
     }
 
-    pub(super) fn connect_context(
-        &self,
-        timeout: Option<u64>,
-        working_dir: PathBuf,
-    ) -> ConnectContext {
+    pub fn connect_context(&self, timeout: Option<u64>, working_dir: PathBuf) -> ConnectContext {
         ConnectContext {
             timeout: Duration::from_secs(timeout.unwrap_or_else(|| self.host.default_timeout())),
             client_name: self.client.name.clone(),
             client_version: self.host.client_version(),
             capabilities: self.client.capabilities.clone(),
             working_dir,
-            docker_container: None,
+
             action_required: self.host.action_required(),
             tools_version: Arc::clone(&self.tools_version),
             trace_context: self.host.trace_context(),
@@ -103,9 +95,11 @@ pub struct Registration {
     revision: u64,
     available_tools: Vec<String>,
     pub(super) unprefixed: bool,
-    /// In-process platform extensions get the MOIM and take the working directory
+    /// Trusted in-process connectors get the MOIM and take the working directory
     /// from each call rather than restarting when it changes.
-    pub(super) platform: bool,
+    pub(super) trusted: bool,
+    pub(super) placed: bool,
+    metadata: serde_json::Value,
     pub(super) config: Option<ExtensionConfig>,
 }
 
@@ -130,9 +124,15 @@ impl Registration {
             revision: 0,
             available_tools: Vec::new(),
             unprefixed: false,
-            platform: false,
+            trusted: false,
+            placed: true,
+            metadata: serde_json::Value::Null,
             config: None,
         }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn with_revision(mut self, revision: u64) -> Self {
@@ -152,6 +152,10 @@ impl Registration {
         self
     }
 
+    pub fn connector(&self) -> &Arc<dyn Connector> {
+        &self.connector
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -160,24 +164,12 @@ impl Registration {
         &self.key
     }
 
-    pub(super) fn from_config(config: ExtensionConfig, host: Arc<dyn ExtensionHost>) -> Self {
-        let platform_extension = match &config {
-            ExtensionConfig::Platform { name, .. } | ExtensionConfig::Builtin { name, .. } => {
-                host.platform_extension(name)
-            }
-            _ => None,
-        };
+    pub fn from_config(config: ExtensionConfig, host: Arc<dyn ExtensionHost>) -> Self {
         let available_tools = match &config {
             ExtensionConfig::StreamableHttp {
                 available_tools, ..
             }
             | ExtensionConfig::Stdio {
-                available_tools, ..
-            }
-            | ExtensionConfig::Builtin {
-                available_tools, ..
-            }
-            | ExtensionConfig::Platform {
                 available_tools, ..
             } => available_tools.clone(),
         };
@@ -191,17 +183,33 @@ impl Registration {
             }),
             revision: 0,
             available_tools,
-            unprefixed: platform_extension.is_some_and(|platform| platform.unprefixed_tools),
-            platform: matches!(config, ExtensionConfig::Platform { .. })
-                || platform_extension.is_some(),
+            unprefixed: false,
+            trusted: false,
+            placed: true,
+            metadata: serde_json::Value::Null,
             config: Some(config),
         }
     }
 
-    /// Host platform extensions run in process, so they are not restarted for a new
-    /// working directory or container.
-    pub(super) fn is_placed(&self, host: &dyn ExtensionHost) -> bool {
-        !matches!(&self.config, Some(ExtensionConfig::Platform { name, .. } | ExtensionConfig::Builtin { name, .. }) if host.platform_extension(name).is_some())
+    /// Mark an in-process connector as trusted to emit host-reserved metadata.
+    pub fn trusted(mut self) -> Self {
+        self.trusted = true;
+        self
+    }
+
+    /// Do not restart this connector when the scope's working directory changes.
+    pub fn location_independent(mut self) -> Self {
+        self.placed = false;
+        self
+    }
+
+    /// Opaque host data; participates in registration equivalence.
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+    pub fn metadata(&self) -> &serde_json::Value {
+        &self.metadata
     }
 
     pub(super) fn is_tool_available(&self, tool: &str) -> bool {
@@ -215,7 +223,9 @@ impl Registration {
             && self.revision == other.revision
             && self.available_tools == other.available_tools
             && self.unprefixed == other.unprefixed
-            && self.platform == other.platform
+            && self.trusted == other.trusted
+            && self.placed == other.placed
+            && self.metadata == other.metadata
             && self.config == other.config
     }
 }
@@ -233,15 +243,17 @@ impl Connector for ConfigConnector {
         &self,
         request: &ConnectRequest,
     ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
+        let _ = request;
         let resolved = self.host.resolve_config(self.config.clone()).await?;
         let resolved = self.resolved.get_or_init(|| resolved);
+        #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
         let working_dir = match resolved {
             ExtensionConfig::Stdio { cwd: Some(cwd), .. } => PathBuf::from(cwd),
             _ => request.working_dir.clone(),
         };
-        let container = request.container.as_ref();
+        #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
         let host = self.host.as_ref();
-        let client: Box<dyn McpClientTrait> = match resolved {
+        match resolved {
             #[cfg(feature = "mcp-http")]
             ExtensionConfig::StreamableHttp {
                 uri,
@@ -269,33 +281,17 @@ impl Connector for ConfigConnector {
                     ctx: request.connect_context(*timeout, working_dir),
                     auth: host.auth(),
                 };
-                streamable_http::connect(
+                let client = streamable_http::connect(
                     params,
                     socket.as_deref(),
                     host.auth().credential_store(name),
                 )
-                .await?
+                .await?;
+                Ok(Some(client))
             }
             #[cfg(not(feature = "mcp-http"))]
             ExtensionConfig::StreamableHttp { .. } => {
-                return Err(transport_disabled("streamable_http", "mcp-http"));
-            }
-            ExtensionConfig::Builtin { name, .. } | ExtensionConfig::Platform { name, .. }
-                if host.platform_extension(name).is_some() =>
-            {
-                return host.connect_platform(name, request.manager.clone());
-            }
-            ExtensionConfig::Builtin { name, timeout, .. } => {
-                host.connect_builtin(
-                    name,
-                    container,
-                    request.connect_context(*timeout, working_dir),
-                )
-                .await?
-            }
-            ExtensionConfig::Platform { name, .. } => {
-                host.connect_builtin(name, container, request.connect_context(None, working_dir))
-                    .await?
+                Err(transport_disabled("streamable_http", "mcp-http"))
             }
             #[cfg(feature = "mcp-stdio")]
             ExtensionConfig::Stdio {
@@ -307,24 +303,21 @@ impl Connector for ConfigConnector {
             } => {
                 let mut envs = envs.get_env();
                 envs.insert("AGENT_SESSION_ID".to_string(), request.scope_id.clone());
-                Box::new(
+                let client = Box::new(
                     stdio::connect(
                         cmd,
                         args,
                         envs,
-                        container,
                         request.connect_context(*timeout, working_dir),
                         host,
                     )
                     .await?,
-                )
+                );
+                Ok(Some(client as Box<dyn McpClientTrait>))
             }
             #[cfg(not(feature = "mcp-stdio"))]
-            ExtensionConfig::Stdio { .. } => {
-                return Err(transport_disabled("stdio", "mcp-stdio"));
-            }
-        };
-        Ok(Some(client))
+            ExtensionConfig::Stdio { .. } => Err(transport_disabled("stdio", "mcp-stdio")),
+        }
     }
 
     /// Secrets and environment may have changed since the extension started.

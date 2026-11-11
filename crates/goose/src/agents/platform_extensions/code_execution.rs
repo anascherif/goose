@@ -121,6 +121,7 @@ impl CodeExecutionClient {
             .and_then(|w| w.upgrade())
             .ok_or("Extension manager not available")?;
         let dispatch = cancellation_token.child_token();
+        let context = self.context.clone();
         let callback: ToolCallback = Arc::new({
             let ctx = ctx.clone();
             let dispatch = dispatch.clone();
@@ -138,6 +139,7 @@ impl CodeExecutionClient {
                     manager.clone(),
                     dispatch.clone(),
                     rt.clone(),
+                    context.clone(),
                     args,
                 )
             }
@@ -168,7 +170,7 @@ fn is_summon_delegate(tool: &McpTool) -> bool {
 fn execution_timeout() -> Duration {
     let secs = crate::config::Config::global()
         .get_goose_default_extension_timeout()
-        .unwrap_or(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT);
+        .unwrap_or(crate::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT);
     Duration::from_secs(secs)
 }
 
@@ -183,6 +185,7 @@ fn dispatch_tool(
     manager: Arc<goose_agent::extension_manager::ExtensionManager>,
     cancellation_token: CancellationToken,
     rt: tokio::runtime::Handle,
+    context: PlatformExtensionContext,
     args: Value,
 ) -> ToolFuture {
     Box::pin(async move {
@@ -206,6 +209,7 @@ fn dispatch_tool(
                             &manager,
                             dispatch_result,
                             &ctx.session_id,
+                            &context,
                         )
                         .result
                         .await
@@ -346,8 +350,8 @@ impl McpClientTrait for CodeExecutionClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::extension_config::ExtensionConfig;
     use crate::agents::extension_manager::ExtensionManager;
-    use goose_agent::extension::ExtensionConfig;
     use rmcp::model::{Annotations, EmbeddedResource, MetaObject, ResourceContents, TextContent};
 
     #[test]
@@ -483,6 +487,7 @@ mod tests {
             manager.runtime().clone(),
             dispatch.clone(),
             tokio::runtime::Handle::current(),
+            manager.get_context().clone(),
             json!({}),
         );
         assert!(callback.as_mut().now_or_never().is_none());

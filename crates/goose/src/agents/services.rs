@@ -1407,11 +1407,11 @@ mod tests {
         use rmcp::ServiceExt;
         use tokio::sync::Barrier;
 
+        use crate::agents::extension_config::ExtensionConfig;
         use crate::agents::{GoosePlatform, StateMachineServices, StateMachineServicesConfig};
         use crate::config::permission::PermissionManager;
         use crate::config::GooseMode;
         use crate::session::{EnabledExtensionsState, ExtensionState, SessionManager, SessionType};
-        use goose_agent::extension::ExtensionConfig;
 
         fn test_services(temp_dir: &TempDir, max_sessions: usize) -> Arc<StateMachineServices> {
             let mut config = StateMachineServicesConfig::new(

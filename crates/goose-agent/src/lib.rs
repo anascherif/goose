@@ -1,7 +1,5 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod action_required_manager;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod container;
 pub mod events;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod extension;

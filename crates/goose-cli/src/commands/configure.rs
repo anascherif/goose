@@ -2,6 +2,8 @@ use crate::recipes::github_recipe::GOOSE_RECIPE_GITHUB_REPO_CONFIG_KEY;
 use cliclack::spinner;
 use console::style;
 use goose::agents::extension::ToolInfo;
+use goose::agents::extension_config::ExtensionConfig;
+use goose::agents::extension_config::{name_to_key, Envs};
 use goose::agents::platform_extensions::PLATFORM_EXTENSIONS;
 use goose::agents::{StateMachineServices, StateMachineServicesConfig};
 use goose::config::declarative_providers::{
@@ -24,8 +26,6 @@ use goose::providers::base::ConfigKey;
 use goose::providers::provider_test::test_provider_configuration;
 use goose::providers::{create, providers, retry_operation, RetryConfig};
 use goose::session::SessionType;
-use goose_agent::extension::ExtensionConfig;
-use goose_agent::extension::{name_to_key, Envs};
 use goose_agent::extension_manager::get_parameter_names;
 use goose_providers::thinking::ThinkingEffort;
 use serde_json::Value;
@@ -1099,7 +1099,7 @@ pub fn toggle_extensions_dialog() -> anyhow::Result<()> {
 fn prompt_extension_timeout() -> anyhow::Result<u64> {
     Ok(
         cliclack::input("Please set the timeout for this tool (in secs):")
-            .placeholder(&goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT.to_string())
+            .placeholder(&goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT.to_string())
             .validate(|input: &String| match input.parse::<u64>() {
                 Ok(_) => Ok(()),
                 Err(_) => Err("Please enter a valid timeout"),
@@ -2043,7 +2043,8 @@ pub async fn handle_openrouter_auth() -> anyhow::Result<()> {
                                 name: "developer".to_string(),
                                 description: "Developer extension".to_string(),
                                 display_name: Some(
-                                    goose_agent::extension::DEFAULT_DISPLAY_NAME.to_string(),
+                                    goose::agents::extension_config::DEFAULT_DISPLAY_NAME
+                                        .to_string(),
                                 ),
                                 bundled: Some(true),
                                 available_tools: Vec::new(),
@@ -2114,7 +2115,8 @@ pub async fn handle_tetrate_auth() -> anyhow::Result<()> {
                                 name: "developer".to_string(),
                                 description: "Developer extension".to_string(),
                                 display_name: Some(
-                                    goose_agent::extension::DEFAULT_DISPLAY_NAME.to_string(),
+                                    goose::agents::extension_config::DEFAULT_DISPLAY_NAME
+                                        .to_string(),
                                 ),
                                 bundled: Some(true),
                                 available_tools: Vec::new(),

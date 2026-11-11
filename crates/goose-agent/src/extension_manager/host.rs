@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,7 +9,7 @@ use rmcp::transport::auth::{CredentialStore, InMemoryCredentialStore};
 #[cfg(feature = "mcp-http")]
 use rmcp::transport::AuthorizationManager;
 
-use super::{ClientContext, ExtensionManager};
+use super::ClientContext;
 use rmcp::model::{CallToolResult, Tool};
 use tokio_util::sync::CancellationToken;
 
@@ -25,22 +25,14 @@ pub struct ResultContext<'a> {
 }
 
 use crate::action_required_manager::ActionRequiredManager;
-use crate::container::Container;
 use crate::extension::{ExtensionConfig, ExtensionResult, DEFAULT_EXTENSION_TIMEOUT};
 use crate::mcp_client::{McpClientTrait, TraceContextInjector};
-
-#[derive(Clone, Copy, Default)]
-pub struct PlatformExtension {
-    pub unprefixed_tools: bool,
-}
 
 #[derive(Clone)]
 pub struct ExtensionSession {
     pub id: String,
     pub working_dir: PathBuf,
-    pub container: Option<Container>,
-    pub extensions: Vec<ExtensionConfig>,
-    pub provider_runs_tool_loop: bool,
+    pub extensions: Vec<super::Registration>,
 }
 
 #[cfg(feature = "mcp-http")]
@@ -94,18 +86,22 @@ impl ExtensionAuth for NoExtensionAuth {
 /// configuration, extension registration, and authorization policy.
 ///
 /// Only `action_required` is required. The defaults suit a host that resolves its
-/// own [`ExtensionSet`](super::ExtensionSet)s with [`ExtensionManager::resolve`] and
+/// own [`ExtensionSet`](super::ExtensionSet)s with [`super::ExtensionManager::resolve`] and
 /// does not change selections at runtime: session lookup and selection changes
 /// fail, configs are used as given, and authorization is unavailable.
 #[async_trait]
 pub trait ExtensionHost: Send + Sync {
-    /// Needed by [`ExtensionManager::current_lease`], `enable`, and `disable`.
+    /// Needed by [`super::ExtensionManager::current_lease`], `enable`, and `disable`.
     async fn session(&self, session_id: &str) -> Result<ExtensionSession> {
         anyhow::bail!("this host does not look up extension sessions ({session_id})")
     }
 
-    async fn select(&self, _session_id: &str, config: ExtensionConfig) -> ExtensionResult<()> {
-        Err(runtime_changes_unsupported(&config.name()))
+    async fn select(
+        &self,
+        _session_id: &str,
+        registration: super::Registration,
+    ) -> ExtensionResult<()> {
+        Err(runtime_changes_unsupported(registration.name()))
     }
 
     async fn disable(&self, _session_id: &str, key: &str) -> ExtensionResult<bool> {
@@ -117,7 +113,7 @@ pub trait ExtensionHost: Send + Sync {
         Ok(config)
     }
 
-    /// Result `_meta` keys only in-process platform extensions may set. They are
+    /// Result `_meta` keys only trusted in-process connectors may set. They are
     /// removed from other extensions' results, so an external server cannot trigger
     /// host behavior keyed on them.
     fn reserved_result_meta_keys(&self) -> &'static [&'static str] {
@@ -153,49 +149,6 @@ pub trait ExtensionHost: Send + Sync {
     fn default_timeout(&self) -> u64 {
         DEFAULT_EXTENSION_TIMEOUT
     }
-    fn platform_extension(&self, _name: &str) -> Option<PlatformExtension> {
-        None
-    }
-    fn connect_platform(
-        &self,
-        _name: &str,
-        _manager: Weak<ExtensionManager>,
-    ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
-        Ok(None)
-    }
-    /// Connect an application-provided extension. The runtime does not know its
-    /// registry, executable, or placement strategy.
-    async fn connect_builtin(
-        &self,
-        name: &str,
-        _container: Option<&Container>,
-        _context: crate::mcp_client::ConnectContext,
-    ) -> ExtensionResult<Box<dyn McpClientTrait>> {
-        Err(crate::extension::ExtensionError::ConfigError(format!(
-            "Unknown extension: {name}"
-        )))
-    }
-
-    /// Build the command for an MCP subprocess. A host may implement remote or
-    /// container execution; the default only supports local subprocesses.
-    #[cfg(feature = "mcp-stdio")]
-    fn stdio_command(
-        &self,
-        program: &str,
-        args: &[String],
-        env: std::collections::HashMap<String, String>,
-        container: Option<&Container>,
-    ) -> ExtensionResult<tokio::process::Command> {
-        if container.is_some() {
-            return Err(crate::extension::ExtensionError::ConfigError(
-                "this host does not support container subprocesses".to_string(),
-            ));
-        }
-        let mut command = tokio::process::Command::new(self.resolve_command(program));
-        command.args(args).envs(env);
-        Ok(command)
-    }
-
     fn resolve_command(&self, cmd: &str) -> PathBuf {
         PathBuf::from(cmd)
     }

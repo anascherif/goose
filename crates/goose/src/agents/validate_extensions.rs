@@ -1,5 +1,5 @@
+use crate::agents::extension_config::ExtensionConfig;
 use anyhow::Result;
-use goose_agent::extension::ExtensionConfig;
 use serde::Deserialize;
 use std::path::Path;
 

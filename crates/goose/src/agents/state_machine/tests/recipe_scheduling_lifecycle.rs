@@ -11,6 +11,7 @@ use super::pipeline::{
     test_pipeline, test_pipeline_with, MessageKind::Agent, MessageKind::Error,
     MessageKind::ToolResponse,
 };
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::final_output_tool::{FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_TOOL_NAME};
 #[cfg(feature = "scheduler")]
 use crate::agents::platform_extensions::scheduler::MANAGE_SCHEDULE_TOOL_NAME_COMPLETE;
@@ -21,7 +22,6 @@ use crate::conversation::message::Message;
 #[cfg(feature = "tree-sitter")]
 use crate::recipe::build_recipe::build_recipe_from_template;
 use crate::recipe::{Recipe, Response, SubRecipe};
-use goose_agent::extension::ExtensionConfig;
 
 #[tokio::test]
 async fn slash_recipe_extensions_remain_available_in_the_session() -> Result<()> {

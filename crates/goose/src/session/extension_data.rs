@@ -1,11 +1,11 @@
 // Extension data management for sessions
 // Provides a simple way to store extension-specific data with versioned keys
 
+use crate::agents::extension_config::ExtensionConfig;
 use crate::config::base::Config;
 use crate::config::extensions::is_extension_available;
 use crate::session::{Session, SessionManager};
 use anyhow::Result;
-use goose_agent::extension::ExtensionConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ impl EnabledExtensionsState {
     }
 
     pub fn check_unique_keys(extensions: &[ExtensionConfig]) -> Result<()> {
-        goose_agent::extension::check_unique_keys(extensions)
+        crate::agents::extension_config::check_unique_keys(extensions)
     }
 
     pub fn from_extension_data(extension_data: &ExtensionData) -> Option<Self> {

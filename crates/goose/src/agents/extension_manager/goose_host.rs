@@ -1,31 +1,55 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_agent::extension_manager::host::{
-    ExtensionAuth, ExtensionHost, ExtensionSession, PlatformExtension, StaticOAuthClientConfig,
+    ExtensionAuth, ExtensionHost, ExtensionSession, StaticOAuthClientConfig,
 };
-use goose_agent::extension_manager::ExtensionManager;
+use goose_agent::extension_manager::Registration;
 use rmcp::transport::auth::CredentialStore;
 use rmcp::transport::AuthorizationManager;
 
-use super::{
-    name_to_key, EnabledExtensionsState, PlatformExtensionContext, Session, PLATFORM_EXTENSIONS,
-};
+use super::{EnabledExtensionsState, PlatformExtensionContext, Session};
+use crate::agents::extension_config::{ExtensionConfig, ExtensionResult};
 use crate::agents::provider_manager::provider_name_for;
 use crate::config::search_path::SearchPaths;
 use crate::config::Config;
 use goose_agent::action_required_manager::ActionRequiredManager;
-use goose_agent::extension::{ExtensionConfig, ExtensionResult};
-use goose_agent::mcp_client::{McpClientTrait, TraceContextInjector};
+use goose_agent::mcp_client::TraceContextInjector;
 
 pub(super) struct GooseExtensionHost {
     pub context: PlatformExtensionContext,
 }
 
 impl GooseExtensionHost {
+    pub(super) fn stdio_command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: std::collections::HashMap<String, String>,
+        container: Option<&crate::container::Container>,
+    ) -> ExtensionResult<tokio::process::Command> {
+        let command = match container {
+            Some(container) => {
+                let mut command = tokio::process::Command::new("docker");
+                command.arg("exec").arg("-i");
+                for (key, value) in env {
+                    command.arg("-e").arg(format!("{key}={value}"));
+                }
+                command.arg(container.id()).arg(program).args(args);
+                command
+            }
+            None => {
+                let mut command = tokio::process::Command::new(self.resolve_command(program));
+                command.args(args).envs(env);
+                command
+            }
+        };
+        Ok(command)
+    }
+
     pub(super) async fn session_selection(&self, session: &Session) -> ExtensionSession {
         let provider_runs_tool_loop = match self.context.providers.pinned(session).await {
             Some(provider) => provider.manages_own_context(),
@@ -36,14 +60,23 @@ impl GooseExtensionHost {
                 Err(_) => false,
             },
         };
+        let configs = EnabledExtensionsState::from_extension_data(&session.extension_data)
+            .map(|state| state.extensions)
+            .unwrap_or_default();
+        let host = Arc::new(Self {
+            context: self.context.clone(),
+        });
+        let extensions = configs
+            .into_iter()
+            .filter(|config| !provider_runs_tool_loop || config.external().is_none())
+            .map(|config| {
+                super::registration::registration(config, session.container.clone(), host.clone())
+            })
+            .collect();
         ExtensionSession {
             id: session.id.clone(),
             working_dir: session.working_dir.clone(),
-            container: session.container.clone(),
-            extensions: EnabledExtensionsState::from_extension_data(&session.extension_data)
-                .map(|state| state.extensions)
-                .unwrap_or_default(),
-            provider_runs_tool_loop,
+            extensions,
         }
     }
 }
@@ -59,7 +92,11 @@ impl ExtensionHost for GooseExtensionHost {
         Ok(self.session_selection(&session).await)
     }
 
-    async fn select(&self, session_id: &str, config: ExtensionConfig) -> ExtensionResult<()> {
+    async fn select(&self, session_id: &str, registration: Registration) -> ExtensionResult<()> {
+        let config: ExtensionConfig = serde_json::from_value(registration.metadata().clone())
+            .map_err(|e| {
+                crate::agents::extension_config::ExtensionError::ConfigError(e.to_string())
+            })?;
         self.context
             .session_manager
             .update_enabled_extensions(session_id, |extensions| {
@@ -70,7 +107,9 @@ impl ExtensionHost for GooseExtensionHost {
                 }
             })
             .await
-            .map_err(|error| goose_agent::extension::ExtensionError::SetupError(error.to_string()))
+            .map_err(|error| {
+                crate::agents::extension_config::ExtensionError::SetupError(error.to_string())
+            })
     }
 
     async fn disable(&self, session_id: &str, key: &str) -> ExtensionResult<bool> {
@@ -82,10 +121,15 @@ impl ExtensionHost for GooseExtensionHost {
                 extensions.len() != selected
             })
             .await
-            .map_err(|error| goose_agent::extension::ExtensionError::SetupError(error.to_string()))
+            .map_err(|error| {
+                crate::agents::extension_config::ExtensionError::SetupError(error.to_string())
+            })
     }
 
-    async fn resolve_config(&self, config: ExtensionConfig) -> ExtensionResult<ExtensionConfig> {
+    async fn resolve_config(
+        &self,
+        config: goose_agent::extension::ExtensionConfig,
+    ) -> ExtensionResult<goose_agent::extension::ExtensionConfig> {
         config.resolve(Config::global()).await
     }
 
@@ -132,61 +176,7 @@ impl ExtensionHost for GooseExtensionHost {
     fn default_timeout(&self) -> u64 {
         Config::global()
             .get_goose_default_extension_timeout()
-            .unwrap_or(goose_agent::extension::DEFAULT_EXTENSION_TIMEOUT)
-    }
-
-    fn platform_extension(&self, name: &str) -> Option<PlatformExtension> {
-        PLATFORM_EXTENSIONS
-            .get(name_to_key(name).as_str())
-            .map(|def| PlatformExtension {
-                unprefixed_tools: def.unprefixed_tools,
-            })
-    }
-
-    fn connect_platform(
-        &self,
-        name: &str,
-        manager: Weak<ExtensionManager>,
-    ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
-        let def = &PLATFORM_EXTENSIONS[name_to_key(name).as_str()];
-        let mut context = self.context.clone();
-        context.extension_manager = Some(manager);
-        Ok((def.client_factory)(context))
-    }
-
-    async fn connect_builtin(
-        &self,
-        name: &str,
-        container: Option<&goose_agent::container::Container>,
-        context: goose_agent::mcp_client::ConnectContext,
-    ) -> ExtensionResult<Box<dyn McpClientTrait>> {
-        super::builtin::connect(name, container, context, self).await
-    }
-
-    fn stdio_command(
-        &self,
-        program: &str,
-        args: &[String],
-        env: std::collections::HashMap<String, String>,
-        container: Option<&goose_agent::container::Container>,
-    ) -> ExtensionResult<tokio::process::Command> {
-        let command = match container {
-            Some(container) => {
-                let mut command = tokio::process::Command::new("docker");
-                command.arg("exec").arg("-i");
-                for (key, value) in env {
-                    command.arg("-e").arg(format!("{key}={value}"));
-                }
-                command.arg(container.id()).arg(program).args(args);
-                command
-            }
-            None => {
-                let mut command = tokio::process::Command::new(self.resolve_command(program));
-                command.args(args).envs(env);
-                command
-            }
-        };
-        Ok(command)
+            .unwrap_or(crate::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT)
     }
 
     fn resolve_command(&self, cmd: &str) -> PathBuf {

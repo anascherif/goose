@@ -12,6 +12,7 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Role, Tool, ToolAnnotations,
 };
 
+use crate::agents::extension_config::ExtensionInfo;
 use crate::agents::extension_manager::ExtensionManager;
 use crate::agents::state_machine::ops_llm::{ADVERTISED_TOOLS_NOTE, LLM_OPERATION_NAME};
 use crate::agents::state_machine::ops_skills::LOAD_SKILL_TOOL_NAME;
@@ -30,7 +31,6 @@ use crate::conversation::Conversation;
 use crate::hints::load_hints::SubdirectoryHintTracker;
 use crate::hooks::{HookContext, HookEvent, HookManager};
 use crate::session::Session;
-use goose_agent::extension::ExtensionInfo;
 use goose_agent::extension_manager::{
     CallRequest, ExtensionLease, PendingCall, ToolCallBatch, TurnLease,
 };
@@ -317,7 +317,7 @@ impl ToolExecutionOperation {
 
     async fn mcp_tools(&self, lease: &ExtensionLease) -> Result<Vec<Tool>> {
         Ok(lease
-            .non_platform_tools()
+            .untrusted_tools()
             .await?
             .into_iter()
             .filter(is_tool_visible_to_model)
@@ -406,8 +406,7 @@ impl ToolExecutionOperation {
                 let result = lease
                     .call(
                         tool_call.clone(),
-                        CallRequest::new(request_id.clone())
-                            .with_container(session.container.clone()),
+                        CallRequest::new(request_id.clone()),
                         cancellation_token,
                     )
                     .await;

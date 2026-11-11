@@ -1,5 +1,5 @@
+use crate::agents::extension_config::{name_to_key, ExtensionError, ExtensionResult};
 use futures::FutureExt;
-use goose_agent::extension::{name_to_key, ExtensionError, ExtensionResult};
 use goose_agent::tool_execution::ToolCallResult;
 use rmcp::model::{CallToolResult, ErrorCode, ErrorData, MetaObject};
 use std::sync::Arc;
@@ -37,13 +37,23 @@ async fn apply(
     manager: &Arc<goose_agent::extension_manager::ExtensionManager>,
     mutation: ExtensionMutation,
     session_id: &str,
+    context: &crate::agents::platform_extensions::PlatformExtensionContext,
 ) -> ExtensionResult<()> {
     match mutation {
         ExtensionMutation::Enable { name } => {
             let config = crate::config::get_extension_by_name(&name).ok_or_else(|| {
                 ExtensionError::ConfigError(format!("Extension '{}' not found", name))
             })?;
-            manager.enable(session_id, config).await
+            let session = context
+                .session_manager
+                .get_session(session_id, false)
+                .await
+                .map_err(|e| ExtensionError::SetupError(e.to_string()))?;
+            let host = Arc::new(super::goose_host::GooseExtensionHost {
+                context: context.clone(),
+            });
+            let registration = super::registration::registration(config, session.container, host);
+            manager.enable(session_id, registration).await
         }
         ExtensionMutation::Disable { name } => {
             manager.disable(session_id, &name_to_key(&name)).await?;
@@ -56,18 +66,22 @@ pub(crate) fn applying_mutation(
     manager: &Arc<goose_agent::extension_manager::ExtensionManager>,
     result: ToolCallResult,
     session_id: &str,
+    context: &crate::agents::platform_extensions::PlatformExtensionContext,
 ) -> ToolCallResult {
     let manager = Arc::clone(manager);
     let session_id = session_id.to_string();
+    let context = context.clone();
     let inner = result.result;
     ToolCallResult {
         result: Box::new(
             async move {
                 let mut result = inner.await?;
                 if let Some(mutation) = ExtensionMutation::take(&mut result) {
-                    apply(&manager, mutation, &session_id).await.map_err(|e| {
-                        ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
-                    })?;
+                    apply(&manager, mutation, &session_id, &context)
+                        .await
+                        .map_err(|e| {
+                            ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
+                        })?;
                 }
                 Ok(result)
             }
@@ -83,10 +97,10 @@ impl super::ExtensionManager {
         mutation: ExtensionMutation,
         session_id: &str,
     ) -> ExtensionResult<()> {
-        apply(&self.manager, mutation, session_id).await
+        apply(&self.manager, mutation, session_id, &self.context).await
     }
 
     pub fn applying_mutation(&self, result: ToolCallResult, session_id: &str) -> ToolCallResult {
-        applying_mutation(&self.manager, result, session_id)
+        applying_mutation(&self.manager, result, session_id, &self.context)
     }
 }

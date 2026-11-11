@@ -18,6 +18,7 @@ use super::calculator_extension::{delayed_value, value, CalculatorExtension, ADD
 use super::dummy_api::{ApiCall, DummyApi, ProviderFeatures};
 use super::pipeline::calculator_extension;
 use crate::acp::server::AcpConnection;
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::state_machine::ops_toolcalling::EXPIRED_APPROVAL_RESPONSE;
 use crate::agents::{
     AgentEvent, GoosePlatform, SessionConfig, StateMachineServices, StateMachineServicesConfig,
@@ -28,7 +29,6 @@ use crate::conversation::message::{ActionRequiredData, Message, MessageContent};
 use crate::permission::Permission;
 use crate::providers::base::Provider;
 use crate::session::{SessionManager, SessionType};
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::mcp_client::McpClientTrait;
 use goose_providers::model::ModelConfig;
 
@@ -1087,7 +1087,7 @@ async fn a_subagent_runs_the_parents_hooks_and_is_released_when_it_finishes() ->
         .extension_manager
         .scope_lease(subagent_id)
         .await
-        .configs()
+        .registrations()
         .is_empty());
     Ok(())
 }
@@ -1471,7 +1471,7 @@ async fn cancelling_the_parent_ends_a_waiting_subagent() -> Result<()> {
                         .extension_manager
                         .scope_lease(subagent_id)
                         .await
-                        .configs()
+                        .registrations()
                         .is_empty()
                 {
                     return subagent_id.clone();
@@ -1691,7 +1691,7 @@ async fn a_stopped_subagent_is_released_before_a_slow_session_end_hook_and_resum
                 .extension_manager
                 .scope_lease(&subagent_id)
                 .await
-                .configs()
+                .registrations()
                 .is_empty()
         {
             tokio::time::sleep(Duration::from_millis(20)).await;

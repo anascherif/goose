@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::platform_extensions::developer;
 use crate::config::Config;
 use crate::conversation::message::Message;
@@ -10,7 +11,6 @@ use crate::session::{
     config_path, latest_llm_log_path, read_capped, read_tail, recent_cli_log_paths, Session,
     SessionManager, SystemInfo,
 };
-use goose_agent::extension::ExtensionConfig;
 use goose_providers::errors::ProviderError;
 
 pub(crate) const DEVELOPER_EXTENSION_REQUIRED_MESSAGE: &str = "**Goose Doctor**\n\n\

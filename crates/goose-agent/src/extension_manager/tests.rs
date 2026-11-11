@@ -1,6 +1,5 @@
 use super::*;
-use crate::extension::check_unique_keys;
-use crate::extension_manager::host::PlatformExtension;
+use crate::extension::ExtensionConfig;
 #[cfg(feature = "mcp-http")]
 use crate::extension_manager::host::{ExtensionAuth, StaticOAuthClientConfig};
 use crate::tool_execution::ToolCallContext;
@@ -26,9 +25,7 @@ impl TestHost {
             session: Mutex::new(ExtensionSession {
                 id: "session".to_string(),
                 working_dir: PathBuf::new(),
-                container: None,
                 extensions: vec![],
-                provider_runs_tool_loop: false,
             }),
             action_required: Arc::new(ActionRequiredManager::new()),
         }
@@ -43,7 +40,7 @@ impl ExtensionHost for TestHost {
         Ok(session.clone())
     }
 
-    async fn select(&self, _session_id: &str, config: ExtensionConfig) -> ExtensionResult<()> {
+    async fn select(&self, _session_id: &str, config: Registration) -> ExtensionResult<()> {
         let mut session = self.session.lock().await;
         match session
             .extensions
@@ -53,8 +50,7 @@ impl ExtensionHost for TestHost {
             Some(selected) => *selected = config,
             None => session.extensions.push(config),
         }
-        check_unique_keys(&session.extensions)
-            .map_err(|error| ExtensionError::ConfigError(error.to_string()))
+        Ok(())
     }
 
     async fn disable(&self, _session_id: &str, key: &str) -> ExtensionResult<bool> {
@@ -74,12 +70,6 @@ impl ExtensionHost for TestHost {
     #[cfg(feature = "mcp-http")]
     fn auth(&self) -> Arc<dyn ExtensionAuth> {
         Arc::new(NoAuth)
-    }
-
-    fn platform_extension(&self, name: &str) -> Option<PlatformExtension> {
-        (name == "developer").then_some(PlatformExtension {
-            unprefixed_tools: true,
-        })
     }
 }
 
@@ -127,14 +117,24 @@ fn manager_with(startup: StartupPolicy) -> Arc<ExtensionManager> {
     )
 }
 
-fn builtin_config(name: &str) -> ExtensionConfig {
-    ExtensionConfig::Builtin {
-        name: name.to_string(),
-        display_name: None,
-        description: String::new(),
-        timeout: None,
-        bundled: None,
-        available_tools: vec![],
+struct UnavailableConnector;
+#[async_trait]
+impl Connector for UnavailableConnector {
+    async fn connect(
+        &self,
+        _: &ConnectRequest,
+    ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
+        Err(ExtensionError::ConfigError(
+            "unavailable test connector".to_string(),
+        ))
+    }
+}
+fn builtin_config(name: &str) -> Registration {
+    let registration = Registration::new(name, Arc::new(UnavailableConnector));
+    if name == "developer" {
+        registration.trusted().location_independent().unprefixed()
+    } else {
+        registration
     }
 }
 
@@ -418,12 +418,11 @@ async fn minimal_host_defaults_reject_runtime_changes_and_authorization() {
         .await;
     assert!(lease.tools().await.unwrap().is_empty());
 
-    let config = ExtensionConfig::stdio("server", "server", "", 5u64);
+    let config = builtin_config("server");
     assert!(manager.current_lease("scope").await.is_err());
     assert!(manager.enable("scope", config.clone()).await.is_err());
     assert!(host.select("scope", config.clone()).await.is_err());
     assert!(host.disable("scope", "server").await.is_err());
-    assert_eq!(host.resolve_config(config.clone()).await.unwrap(), config);
     #[cfg(feature = "mcp-http")]
     {
         let error = host
@@ -519,7 +518,7 @@ async fn best_effort_startup_omits_failed_extensions() {
 
 #[tokio::test]
 async fn strict_startup_fails_the_catalog_when_an_extension_fails_to_start() {
-    let config = ExtensionConfig::stdio("missing", "/nonexistent/mcp-server", "", 5u64);
+    let config = builtin_config("missing");
     for (startup, fails) in [
         (StartupPolicy::Strict, true),
         (StartupPolicy::BestEffort, false),

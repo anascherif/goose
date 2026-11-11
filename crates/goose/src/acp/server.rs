@@ -8,6 +8,8 @@ pub(super) use crate::acp::response_builder::{
 };
 use crate::acp::tool_call_notifier::ToolCallNotifier;
 use crate::acp::{PermissionDecision, ACP_CURRENT_MODEL};
+use crate::agents::extension_config::Envs;
+use crate::agents::extension_config::ExtensionConfig;
 use crate::agents::platform_extensions::PLATFORM_EXTENSIONS;
 use crate::agents::state_machine::{
     has_unapplied_tool_confirmation_response, pending_tool_confirmations, turn_failure,
@@ -63,8 +65,6 @@ use anyhow::Result;
 use fs_err as fs;
 use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, BoxStream, StreamExt};
-use goose_agent::extension::Envs;
-use goose_agent::extension::ExtensionConfig;
 use goose_agent::extension_manager::ExtensionLoadResult;
 use goose_agent::mcp_client::GooseMcpHostInfo;
 use goose_providers::errors::ProviderError;

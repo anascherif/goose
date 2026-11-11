@@ -1,3 +1,4 @@
+use crate::agents::extension_config::{name_to_key, ExtensionConfig};
 use crate::agents::extension_manager::is_hidden_extension;
 use crate::agents::extension_manager::ExtensionMutation;
 use crate::agents::platform_extensions::PlatformExtensionContext;
@@ -5,7 +6,6 @@ use crate::config::{get_all_extensions, get_extension_by_name};
 use crate::session::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
-use goose_agent::extension::{name_to_key, ExtensionConfig};
 use goose_agent::mcp_client::{Error, McpClientTrait};
 use goose_agent::tool_execution::ToolCallContext;
 use indoc::indoc;
@@ -106,9 +106,9 @@ impl ExtensionManagerClient {
         let enabled: Vec<String> = ctx
             .extension_lease()
             .expect("platform tool calls are dispatched through a lease")
-            .configs()
+            .registrations()
             .iter()
-            .map(ExtensionConfig::key)
+            .map(|registration| registration.key().to_string())
             .collect();
         vec![ContentBlock::text(search_available_extensions(&enabled))]
     }
