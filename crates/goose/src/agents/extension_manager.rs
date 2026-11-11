@@ -9,6 +9,7 @@ use crate::session::{EnabledExtensionsState, Session};
 use goose_agent::extension::name_to_key;
 
 mod apps;
+mod builtin;
 mod goose_host;
 pub use apps::TRUSTED_TOOL_UPDATE_META_KEY;
 mod mutation;

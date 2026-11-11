@@ -1450,7 +1450,7 @@ mod tests {
             services: &StateMachineServices,
             temp_dir: &TempDir,
             fixture: &'static str,
-            serve: goose_agent::extension_manager::host::SpawnServerFn,
+            serve: crate::builtin_extension::SpawnServerFn,
         ) -> String {
             crate::builtin_extension::register_builtin_extension(fixture, serve);
             let session_manager = &services.session_manager;

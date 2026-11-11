@@ -21,13 +21,14 @@ use host::{ExtensionHost, ExtensionSession};
 use rmcp::model::{CallToolResult, MetaObject, ServerConfig, Tool};
 use serde_json::Value;
 
-mod builtin;
 pub mod host;
 mod lease;
 mod operation;
 mod registration;
 #[cfg(feature = "mcp-stdio")]
 mod stdio;
+#[cfg(feature = "mcp-stdio")]
+pub use stdio::spawn as spawn_stdio;
 #[cfg(feature = "mcp-http")]
 mod streamable_http;
 

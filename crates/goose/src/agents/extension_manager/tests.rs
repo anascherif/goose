@@ -671,7 +671,7 @@ fn serve_gated_fixture(read: tokio::io::DuplexStream, write: tokio::io::DuplexSt
 /// secrets; an HTTP server would look up OAuth credentials in the keyring.
 fn fixture_config(
     name: &'static str,
-    spawn: goose_agent::extension_manager::host::SpawnServerFn,
+    spawn: crate::builtin_extension::SpawnServerFn,
 ) -> ExtensionConfig {
     crate::builtin_extension::register_builtin_extension(name, spawn);
     builtin_config(name, vec![])

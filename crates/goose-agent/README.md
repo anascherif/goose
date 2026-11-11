@@ -203,7 +203,8 @@ this crate too. Consumers import the moved types directly from `goose_agent`.
 The extraction preserves the runtime's behavior, with these necessary boundaries:
 
 - `ExtensionHost` supplies session selection/persistence, config resolution,
-  config generation, platform/builtin factories, command search paths, and host identity.
+  config generation, in-process factories, application-extension connections, command placement,
+  command search paths, and host identity.
   `goose` implements it using its existing application services and retains a
   thin manager adapter for application constructors, client defaults, and session snapshots.
   Per-session client negotiation and config-generation invalidation remain in the runtime.
@@ -228,12 +229,15 @@ the exact advertised tool and client. These hooks default to no application poli
 
 Transports are opt-in Cargo features (native only):
 
-- `mcp-stdio` — stdio extensions and containerized builtins.
+- `mcp-stdio` — stdio extensions and `spawn_stdio` for host-built commands.
 - `mcp-http` — streamable HTTP, including Unix sockets and OAuth (`ExtensionAuth`).
 - `extension-malware-check` — OSV lookup for packages run by stdio `npx`/`uvx`.
 
 A config whose transport is not enabled fails to start with a configuration error.
-In-process builtins and platform extensions need no feature.
+In-process extensions need no transport feature. Builtin registries and Docker
+command construction live in goose; the runtime supervises the command returned
+by `ExtensionHost::stdio_command`, or calls `connect_builtin` for application
+extensions. `ConnectContext` and `McpClient::connect` are public for those factories.
 
 `ExtensionHost` requires only `action_required`. The defaults suit a host that
 resolves its own `ExtensionSet`s and does not change selections at runtime:

@@ -514,7 +514,7 @@ impl std::fmt::Debug for GooseMcpClientCapabilities {
 }
 
 #[derive(Clone)]
-pub(crate) struct ConnectContext {
+pub struct ConnectContext {
     pub timeout: Duration,
     pub client_name: String,
     pub client_version: &'static str,
@@ -539,7 +539,7 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    pub(crate) async fn connect<T, E, A>(
+    pub async fn connect<T, E, A>(
         transport: T,
         ctx: ConnectContext,
     ) -> Result<Self, Box<ClientInitializeError>>

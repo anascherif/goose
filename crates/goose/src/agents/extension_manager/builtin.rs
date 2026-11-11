@@ -1,29 +1,20 @@
-use super::host::ExtensionHost;
-#[cfg(feature = "mcp-stdio")]
-use super::stdio;
-use crate::container::Container;
-use crate::extension::name_to_key;
-use crate::extension::{ExtensionError, ExtensionResult};
-use crate::mcp_client::{ConnectContext, McpClient, McpClientTrait};
+use super::goose_host::GooseExtensionHost;
+use goose_agent::container::Container;
+use goose_agent::extension::name_to_key;
+use goose_agent::extension::{ExtensionError, ExtensionResult};
+use goose_agent::extension_manager::host::ExtensionHost;
+use goose_agent::mcp_client::{ConnectContext, McpClient, McpClientTrait};
 
 pub(super) async fn connect(
     name: &str,
     container: Option<&Container>,
     ctx: ConnectContext,
-    host: &dyn ExtensionHost,
+    host: &GooseExtensionHost,
 ) -> ExtensionResult<Box<dyn McpClientTrait>> {
     let key = name_to_key(name);
-    let extension_fn = host
-        .builtin_extension(&key)
+    let extension_fn = crate::builtin_extension::get_builtin_extension(&key)
         .ok_or_else(|| ExtensionError::ConfigError(format!("Unknown extension: {}", name)))?;
 
-    #[cfg(not(feature = "mcp-stdio"))]
-    if container.is_some() {
-        return Err(ExtensionError::ConfigError(format!(
-            "builtin extension {name} in a container requires goose-agent's `mcp-stdio` feature"
-        )));
-    }
-    #[cfg(feature = "mcp-stdio")]
     if let Some(container) = container {
         let mut ctx = ctx;
         ctx.docker_container = Some(container.id().to_string());
@@ -32,9 +23,11 @@ pub(super) async fn connect(
             builtin = %name,
             "Starting builtin extension inside Docker container"
         );
-        let (program, args) = host.builtin_command(&key)?;
-        let command = stdio::docker_exec(container, Default::default(), &program, &args);
-        return Ok(Box::new(stdio::spawn(command, ctx, host).await?));
+        let args = vec!["mcp".to_string(), key];
+        let command = host.stdio_command("goose", &args, Default::default(), Some(container))?;
+        return Ok(Box::new(
+            goose_agent::extension_manager::spawn_stdio(command, ctx, host).await?,
+        ));
     }
 
     let (server_read, client_write) = tokio::io::duplex(65536);

@@ -5,8 +5,7 @@ use std::sync::{Arc, Weak};
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_agent::extension_manager::host::{
-    ExtensionAuth, ExtensionHost, ExtensionSession, PlatformExtension, SpawnServerFn,
-    StaticOAuthClientConfig,
+    ExtensionAuth, ExtensionHost, ExtensionSession, PlatformExtension, StaticOAuthClientConfig,
 };
 use goose_agent::extension_manager::ExtensionManager;
 use rmcp::transport::auth::CredentialStore;
@@ -155,15 +154,39 @@ impl ExtensionHost for GooseExtensionHost {
         Ok((def.client_factory)(context))
     }
 
-    fn builtin_extension(&self, name: &str) -> Option<SpawnServerFn> {
-        crate::builtin_extension::get_builtin_extension(name)
+    async fn connect_builtin(
+        &self,
+        name: &str,
+        container: Option<&goose_agent::container::Container>,
+        context: goose_agent::mcp_client::ConnectContext,
+    ) -> ExtensionResult<Box<dyn McpClientTrait>> {
+        super::builtin::connect(name, container, context, self).await
     }
 
-    fn builtin_command(&self, name: &str) -> ExtensionResult<(String, Vec<String>)> {
-        Ok((
-            "goose".to_string(),
-            vec!["mcp".to_string(), name.to_string()],
-        ))
+    fn stdio_command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: std::collections::HashMap<String, String>,
+        container: Option<&goose_agent::container::Container>,
+    ) -> ExtensionResult<tokio::process::Command> {
+        let command = match container {
+            Some(container) => {
+                let mut command = tokio::process::Command::new("docker");
+                command.arg("exec").arg("-i");
+                for (key, value) in env {
+                    command.arg("-e").arg(format!("{key}={value}"));
+                }
+                command.arg(container.id()).arg(program).args(args);
+                command
+            }
+            None => {
+                let mut command = tokio::process::Command::new(self.resolve_command(program));
+                command.args(args).envs(env);
+                command
+            }
+        };
+        Ok(command)
     }
 
     fn resolve_command(&self, cmd: &str) -> PathBuf {

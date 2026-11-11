@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use super::stdio;
 #[cfg(feature = "mcp-http")]
 use super::streamable_http;
-use super::{builtin, host::ExtensionHost, ClientContext, ExtensionManager};
+use super::{host::ExtensionHost, ClientContext, ExtensionManager};
 use crate::container::Container;
 use crate::extension::{name_to_key, ExtensionConfig, ExtensionResult};
 use crate::mcp_client::{ConnectContext, McpClientTrait};
@@ -286,22 +286,16 @@ impl Connector for ConfigConnector {
                 return host.connect_platform(name, request.manager.clone());
             }
             ExtensionConfig::Builtin { name, timeout, .. } => {
-                builtin::connect(
+                host.connect_builtin(
                     name,
                     container,
                     request.connect_context(*timeout, working_dir),
-                    host,
                 )
                 .await?
             }
             ExtensionConfig::Platform { name, .. } => {
-                builtin::connect(
-                    name,
-                    container,
-                    request.connect_context(None, working_dir),
-                    host,
-                )
-                .await?
+                host.connect_builtin(name, container, request.connect_context(None, working_dir))
+                    .await?
             }
             #[cfg(feature = "mcp-stdio")]
             ExtensionConfig::Stdio {

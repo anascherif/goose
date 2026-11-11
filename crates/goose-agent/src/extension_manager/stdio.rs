@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use rmcp::transport::ConfigureCommandExt;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -21,39 +20,14 @@ pub(super) async fn connect(
     #[cfg(feature = "extension-malware-check")]
     crate::extension_malware_check::deny_if_malicious_cmd_args(cmd, args).await?;
 
-    let command = match container {
-        Some(container) => {
-            ctx.docker_container = Some(container.id().to_string());
-            tracing::info!(
-                container = %container.id(),
-                cmd = %cmd,
-                "Starting stdio extension inside Docker container"
-            );
-            docker_exec(container, envs, cmd, args)
-        }
-        None => Command::new(host.resolve_command(cmd)).configure(|command| {
-            command.args(args).envs(envs);
-        }),
-    };
+    if let Some(container) = container {
+        ctx.docker_container = Some(container.id().to_string());
+    }
+    let command = host.stdio_command(cmd, args, envs, container)?;
     spawn(command, ctx, host).await
 }
 
-pub(super) fn docker_exec(
-    container: &Container,
-    envs: HashMap<String, String>,
-    program: &str,
-    args: &[String],
-) -> Command {
-    Command::new("docker").configure(|command| {
-        command.arg("exec").arg("-i");
-        for (key, value) in envs {
-            command.arg("-e").arg(format!("{}={}", key, value));
-        }
-        command.arg(container.id()).arg(program).args(args);
-    })
-}
-
-pub(super) async fn spawn(
+pub async fn spawn(
     mut command: Command,
     ctx: ConnectContext,
     host: &dyn ExtensionHost,

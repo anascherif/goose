@@ -29,8 +29,6 @@ use crate::container::Container;
 use crate::extension::{ExtensionConfig, ExtensionResult, DEFAULT_EXTENSION_TIMEOUT};
 use crate::mcp_client::{McpClientTrait, TraceContextInjector};
 
-pub type SpawnServerFn = fn(tokio::io::DuplexStream, tokio::io::DuplexStream);
-
 #[derive(Clone, Copy, Default)]
 pub struct PlatformExtension {
     pub unprefixed_tools: bool,
@@ -165,14 +163,39 @@ pub trait ExtensionHost: Send + Sync {
     ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
         Ok(None)
     }
-    fn builtin_extension(&self, _name: &str) -> Option<SpawnServerFn> {
-        None
-    }
-    fn builtin_command(&self, name: &str) -> ExtensionResult<(String, Vec<String>)> {
+    /// Connect an application-provided extension. The runtime does not know its
+    /// registry, executable, or placement strategy.
+    async fn connect_builtin(
+        &self,
+        name: &str,
+        _container: Option<&Container>,
+        _context: crate::mcp_client::ConnectContext,
+    ) -> ExtensionResult<Box<dyn McpClientTrait>> {
         Err(crate::extension::ExtensionError::ConfigError(format!(
-            "No container command for builtin extension: {name}"
+            "Unknown extension: {name}"
         )))
     }
+
+    /// Build the command for an MCP subprocess. A host may implement remote or
+    /// container execution; the default only supports local subprocesses.
+    #[cfg(feature = "mcp-stdio")]
+    fn stdio_command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: std::collections::HashMap<String, String>,
+        container: Option<&Container>,
+    ) -> ExtensionResult<tokio::process::Command> {
+        if container.is_some() {
+            return Err(crate::extension::ExtensionError::ConfigError(
+                "this host does not support container subprocesses".to_string(),
+            ));
+        }
+        let mut command = tokio::process::Command::new(self.resolve_command(program));
+        command.args(args).envs(env);
+        Ok(command)
+    }
+
     fn resolve_command(&self, cmd: &str) -> PathBuf {
         PathBuf::from(cmd)
     }
