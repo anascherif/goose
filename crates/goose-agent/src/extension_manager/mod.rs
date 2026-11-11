@@ -302,6 +302,14 @@ impl Extension {
             .is_some()
     }
 
+    /// Absent server info is treated as tool-capable, since custom clients
+    /// may not report capabilities.
+    fn supports_tools(&self) -> bool {
+        self.server_info
+            .as_ref()
+            .is_none_or(|info| info.capabilities.tools.is_some())
+    }
+
     pub(super) fn is_platform(&self) -> bool {
         self.registration.platform
     }
@@ -339,6 +347,9 @@ impl Extension {
     }
 
     async fn fetch_public_tools(&self, session_id: &str) -> Result<Vec<Tool>, String> {
+        if !self.supports_tools() {
+            return Ok(Vec::new());
+        }
         let cancel_token = CancellationToken::default();
         let expose_unprefixed = self.registration.unprefixed;
         let mut tools = Vec::new();

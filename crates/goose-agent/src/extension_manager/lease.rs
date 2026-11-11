@@ -160,21 +160,29 @@ impl ToolCatalog {
                 Ok(Some(extension)) => Arc::clone(extension),
                 Ok(None) => return None,
                 Err(error) => {
-                    return Some(Err(format!(
-                        "extension {} failed to start: {error}",
-                        slot.registration.name
-                    )))
+                    return Some((
+                        false,
+                        Err(format!(
+                            "extension {} failed to start: {error}",
+                            slot.registration.name
+                        )),
+                    ))
                 }
             };
+            let supports_resources = extension.supports_resources();
             let tools = extension.public_tools(scope_id).await.map_err(|error| {
                 format!("extension {} failed to list tools: {error}", extension.key)
             });
-            Some(tools.map(|tools| (extension, tools)))
+            Some((supports_resources, tools.map(|tools| (extension, tools))))
         }))
         .await;
 
+        // Resource support is independent of tool discovery: a resource-only
+        // server whose tool listing fails still serves resources.
+        let mut supports_resources = false;
         let mut lists = Vec::new();
-        for outcome in outcomes.into_iter().flatten() {
+        for (extension_supports_resources, outcome) in outcomes.into_iter().flatten() {
+            supports_resources |= extension_supports_resources;
             match outcome {
                 Ok(list) => lists.push(list),
                 Err(error) if startup == StartupPolicy::Strict => return Err(error),
@@ -183,9 +191,6 @@ impl ToolCatalog {
                 Err(error) => warn!(%error, "omitting extension from the tool catalog"),
             }
         }
-        let supports_resources = lists
-            .iter()
-            .any(|(extension, _)| extension.supports_resources());
         let extension_manager_key = name_to_key(EXTENSION_MANAGER_NAME);
 
         let mut entries: Vec<CatalogEntry> = Vec::new();
