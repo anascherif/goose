@@ -9,7 +9,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +17,7 @@ use tracing::warn;
 use crate::action_required_manager::ActionRequiredManager;
 use crate::container::Container;
 use crate::extension::{name_to_key, ExtensionConfig, ExtensionError, ExtensionResult};
-use crate::mcp_client::{ConnectContext, GooseMcpClientCapabilities, McpClientTrait};
+use crate::mcp_client::{GooseMcpClientCapabilities, McpClientTrait};
 use crate::tool_execution::ToolCallResult;
 use host::{ExtensionHost, ExtensionSession};
 use rmcp::model::{CallToolResult, ErrorCode, ErrorData, MetaObject, ServerConfig, Tool};
@@ -27,6 +26,7 @@ use serde_json::Value;
 mod builtin;
 pub mod host;
 mod lease;
+mod registration;
 #[cfg(feature = "mcp-stdio")]
 mod stdio;
 #[cfg(feature = "mcp-http")]
@@ -36,6 +36,7 @@ pub use lease::{
     CallRequest, ExtensionLease, ExtensionSet, LeaseId, EXTENSION_MANAGER_NAME,
     LIST_RESOURCES_TOOL_NAME, READ_RESOURCE_TOOL_NAME,
 };
+pub use registration::{ConnectRequest, Connector, Registration};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "action", rename_all = "lowercase")]
@@ -119,11 +120,8 @@ impl Drop for ActionRequiredStream {
 
 pub(super) struct Extension {
     pub(super) key: String,
-    pub(super) config: ExtensionConfig,
-    resolved_config: ExtensionConfig,
+    registration: Registration,
     pub(super) client: McpClientBox,
-    platform: bool,
-    unprefixed: bool,
     server_info: Option<ServerConfig>,
     /// Bumped by the client on tools/list_changed; a cached list is only valid
     /// for the version it was fetched under.
@@ -146,24 +144,26 @@ struct Placement {
 }
 
 impl Placement {
-    fn for_config(
-        config: &ExtensionConfig,
+    fn for_registration(
+        registration: &Registration,
         working_dir: Option<&Path>,
         container: Option<&Container>,
         host: &dyn ExtensionHost,
     ) -> Option<Self> {
-        if matches!(config, ExtensionConfig::Platform { name, .. } | ExtensionConfig::Builtin { name, .. } if host.platform_extension(name).is_some())
-        {
+        if !registration.is_placed(host) {
             return None;
         }
-        let working_dir = working_dir
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         Some(Self {
-            working_dir,
+            working_dir: Self::working_dir(working_dir),
             container: container.cloned(),
         })
+    }
+
+    fn working_dir(working_dir: Option<&Path>) -> PathBuf {
+        working_dir
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var("GOOSE_WORKING_DIR").ok().map(PathBuf::from))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     }
 }
 
@@ -177,7 +177,7 @@ enum Runtime {
 
 pub(super) struct ExtensionSlot {
     key: String,
-    config: ExtensionConfig,
+    pub(super) registration: Registration,
     /// In-process platform extensions take the directory from each call.
     placement: Option<Placement>,
     scope_id: String,
@@ -190,12 +190,12 @@ pub(super) struct ExtensionSlot {
 impl ExtensionSlot {
     fn reusable_for(
         &self,
-        config: &ExtensionConfig,
+        registration: &Registration,
         working_dir: Option<&Path>,
         container: Option<&Container>,
         client: &ClientContext,
     ) -> bool {
-        if self.config != *config {
+        if !self.registration.is_equivalent(registration) {
             return false;
         }
         self.placement.as_ref().is_none_or(|placement| {
@@ -221,11 +221,9 @@ impl ExtensionSlot {
         let current = match self.runtime.get() {
             None | Some(Runtime::Declined) => true,
             Some(Runtime::Failed(_)) => false,
-            Some(Runtime::Running(extension)) => manager
-                .host
-                .resolve_config(self.config.clone())
-                .await
-                .is_ok_and(|config| config == extension.resolved_config),
+            Some(Runtime::Running(extension)) => {
+                extension.registration.connector.is_current().await
+            }
         };
         if current {
             self.config_generation.store(generation, Ordering::SeqCst);
@@ -241,7 +239,7 @@ impl ExtensionSlot {
                 };
                 match manager
                     .start(
-                        &self.config,
+                        &self.registration,
                         self.placement.as_ref(),
                         &self.scope_id,
                         &self.client,
@@ -281,7 +279,7 @@ impl ExtensionSlot {
             Runtime::Running(_) | Runtime::Declined => None,
         };
         ExtensionLoadResult {
-            name: self.config.name(),
+            name: self.registration.name.clone(),
             success: error.is_none(),
             error,
         }
@@ -305,7 +303,7 @@ impl Extension {
     }
 
     pub(super) fn is_platform(&self) -> bool {
-        self.platform
+        self.registration.platform
     }
 
     /// The extension's tools as the model sees them: filtered by
@@ -342,7 +340,7 @@ impl Extension {
 
     async fn fetch_public_tools(&self, session_id: &str) -> Result<Vec<Tool>, String> {
         let cancel_token = CancellationToken::default();
-        let expose_unprefixed = self.unprefixed;
+        let expose_unprefixed = self.registration.unprefixed;
         let mut tools = Vec::new();
         let mut cursor = None;
         loop {
@@ -355,7 +353,7 @@ impl Extension {
                 Err(e) => return Err(e.to_string()),
             };
             for mut tool in page.tools {
-                if !self.config.is_tool_available(&tool.name) {
+                if !self.registration.is_tool_available(&tool.name) {
                     continue;
                 }
                 if !expose_unprefixed {
@@ -642,13 +640,6 @@ fn insert_trusted_tool_update_meta(
     result.meta = Some(MetaObject(meta_map));
 }
 
-#[cfg(not(all(feature = "mcp-stdio", feature = "mcp-http")))]
-fn transport_disabled(kind: &str, feature: &str) -> ExtensionError {
-    ExtensionError::ConfigError(format!(
-        "{kind} extensions require goose-agent's `{feature}` feature"
-    ))
-}
-
 impl ExtensionManager {
     pub fn with_host(host: Arc<dyn ExtensionHost>, default_client: ClientContext) -> Self {
         Self {
@@ -708,18 +699,28 @@ impl ExtensionManager {
         )
     }
 
+    /// The registration a selected config resolves to.
+    pub(super) fn registration(&self, config: ExtensionConfig) -> Registration {
+        Registration::from_config(config, Arc::clone(&self.host))
+    }
+
     fn new_slot(
         self: &Arc<Self>,
         scope_id: &str,
-        config: &ExtensionConfig,
+        registration: Registration,
         working_dir: Option<&Path>,
         container: Option<&Container>,
         client: Arc<ClientContext>,
     ) -> ExtensionSlot {
         ExtensionSlot {
-            key: config.key(),
-            config: config.clone(),
-            placement: Placement::for_config(config, working_dir, container, self.host.as_ref()),
+            key: registration.key.clone(),
+            placement: Placement::for_registration(
+                &registration,
+                working_dir,
+                container,
+                self.host.as_ref(),
+            ),
+            registration,
             scope_id: scope_id.to_string(),
             manager: Arc::downgrade(self),
             client,
@@ -735,15 +736,15 @@ impl ExtensionManager {
             let enabling = self.enabling.lock().await;
             let mut current = scopes.remove(set.scope_id()).unwrap_or_default();
             let mut selected = IndexMap::new();
-            for config in set.extensions() {
-                let key = config.key();
+            for registration in set.registrations(self) {
+                let key = registration.key.clone();
                 let pending = enabling
                     .get(&(set.scope_id().to_string(), key.clone()))
                     .cloned();
                 let mut reusable = None;
                 for slot in current.swap_remove(&key).into_iter().chain(pending) {
                     if slot.reusable_for(
-                        config,
+                        &registration,
                         set.working_dir.as_deref(),
                         set.container.as_ref(),
                         &client,
@@ -756,7 +757,7 @@ impl ExtensionManager {
                 let slot = reusable.unwrap_or_else(|| {
                     Arc::new(self.new_slot(
                         set.scope_id(),
-                        config,
+                        registration,
                         set.working_dir.as_deref(),
                         set.container.as_ref(),
                         Arc::clone(&client),
@@ -816,149 +817,32 @@ impl ExtensionManager {
 
     async fn start(
         self: &Arc<Self>,
-        config: &ExtensionConfig,
+        registration: &Registration,
         placement: Option<&Placement>,
-        session_id: &str,
-        client: &ClientContext,
+        scope_id: &str,
+        client: &Arc<ClientContext>,
     ) -> ExtensionResult<Option<Extension>> {
-        let resolved_config = self.host.resolve_config(config.clone()).await?;
-        let client_working_dir = match &resolved_config {
-            ExtensionConfig::Stdio { cwd: Some(cwd), .. } => PathBuf::from(cwd),
-            _ => placement
+        let request = ConnectRequest::new(
+            scope_id,
+            placement
                 .map(|placement| placement.working_dir.clone())
                 .unwrap_or_default(),
+            placement.and_then(|placement| placement.container.clone()),
+            Arc::clone(client),
+            self,
+        );
+        let Some(mcp_client) = registration.connector.connect(&request).await? else {
+            return Ok(None);
         };
-        let container = placement.and_then(|placement| placement.container.as_ref());
-
-        let tools_version = Arc::new(AtomicU64::new(0));
-        let ctx = |timeout: Option<u64>, working_dir: PathBuf| ConnectContext {
-            timeout: Duration::from_secs(timeout.unwrap_or_else(|| self.host.default_timeout())),
-            client_name: client.name.clone(),
-            client_version: self.host.client_version(),
-            capabilities: client.capabilities.clone(),
-            working_dir,
-            docker_container: None,
-            action_required: self.host.action_required(),
-            tools_version: Arc::clone(&tools_version),
-            trace_context: self.host.trace_context(),
-        };
-
-        let mcp_client: Box<dyn McpClientTrait> = match &resolved_config {
-            #[cfg(feature = "mcp-http")]
-            ExtensionConfig::StreamableHttp {
-                uri,
-                timeout,
-                headers,
-                name,
-                envs,
-                socket,
-                client_id,
-                client_secret_key,
-                scopes,
-                ..
-            } => {
-                let static_oauth_client = streamable_http::resolve_static_oauth_client(
-                    client_id.as_deref(),
-                    client_secret_key.as_deref(),
-                    scopes,
-                    &envs.get_env(),
-                )?;
-                let params = streamable_http::ConnectParams {
-                    uri: uri.clone(),
-                    name: name.clone(),
-                    headers: headers.clone(),
-                    static_oauth_client,
-                    ctx: ctx(*timeout, client_working_dir),
-                    auth: self.host.auth(),
-                };
-                streamable_http::connect(
-                    params,
-                    socket.as_deref(),
-                    self.host.auth().credential_store(name),
-                )
-                .await?
-            }
-            ExtensionConfig::Builtin { name, .. } | ExtensionConfig::Platform { name, .. }
-                if self.host.platform_extension(name).is_some() =>
-            {
-                let Some(client) = self.host.connect_platform(name, Arc::downgrade(self))? else {
-                    return Ok(None);
-                };
-                client
-            }
-            ExtensionConfig::Builtin { name, timeout, .. } => {
-                builtin::connect(
-                    name,
-                    container,
-                    ctx(*timeout, client_working_dir),
-                    self.host.as_ref(),
-                )
-                .await?
-            }
-            ExtensionConfig::Platform { name, .. } => {
-                builtin::connect(
-                    name,
-                    container,
-                    ctx(None, client_working_dir),
-                    self.host.as_ref(),
-                )
-                .await?
-            }
-            #[cfg(not(feature = "mcp-http"))]
-            ExtensionConfig::StreamableHttp { .. } => {
-                return Err(transport_disabled("streamable_http", "mcp-http"));
-            }
-            #[cfg(feature = "mcp-stdio")]
-            ExtensionConfig::Stdio {
-                cmd,
-                args,
-                envs,
-                timeout,
-                ..
-            } => {
-                let mut envs = envs.get_env();
-                envs.insert("AGENT_SESSION_ID".to_string(), session_id.to_string());
-                Box::new(
-                    stdio::connect(
-                        cmd,
-                        args,
-                        envs,
-                        container,
-                        ctx(*timeout, client_working_dir),
-                        self.host.as_ref(),
-                    )
-                    .await?,
-                )
-            }
-            #[cfg(not(feature = "mcp-stdio"))]
-            ExtensionConfig::Stdio { .. } => {
-                let _ = session_id;
-                return Err(transport_disabled("stdio", "mcp-stdio"));
-            }
-        };
-
         let server_info = mcp_client.get_info().cloned();
         Ok(Some(Extension {
-            key: config.key(),
-            config: config.clone(),
-            resolved_config,
-            platform: self.is_platform(config),
-            unprefixed: self.is_unprefixed(config),
+            key: registration.key.clone(),
+            registration: registration.clone(),
             client: Arc::from(mcp_client),
             server_info,
-            tools_version,
+            tools_version: request.tools_version(),
             tools: Mutex::new(None),
         }))
-    }
-
-    fn is_platform(&self, config: &ExtensionConfig) -> bool {
-        matches!(config, ExtensionConfig::Platform { .. })
-            || matches!(config, ExtensionConfig::Builtin { name, .. } if self.host.platform_extension(name).is_some())
-    }
-
-    fn is_unprefixed(&self, config: &ExtensionConfig) -> bool {
-        matches!(config, ExtensionConfig::Platform { name, .. } | ExtensionConfig::Builtin { name, .. }
-            if self.host.platform_extension(name).is_some_and(|def| def.unprefixed_tools))
     }
 
     async fn session(&self, session_id: &str) -> ExtensionResult<ExtensionSession> {
@@ -983,6 +867,7 @@ impl ExtensionManager {
     ) -> ExtensionResult<()> {
         let session = self.session(session_id).await?;
         let client = self.client(session_id);
+        let registration = self.registration(config.clone());
         let pending_key = (session_id.to_string(), config.key());
         let slot = {
             let scopes = self.scopes.lock().await;
@@ -999,7 +884,7 @@ impl ExtensionManager {
                 .chain(selected)
             {
                 if slot.reusable_for(
-                    &config,
+                    &registration,
                     Some(&session.working_dir),
                     session.container.as_ref(),
                     &client,
@@ -1013,7 +898,7 @@ impl ExtensionManager {
             let slot = reusable.unwrap_or_else(|| {
                 Arc::new(self.new_slot(
                     session_id,
-                    &config,
+                    registration,
                     Some(&session.working_dir),
                     session.container.as_ref(),
                     client,
@@ -1123,11 +1008,12 @@ impl ExtensionManager {
     ) {
         let key = config.key();
         let negotiation = self.client(session_id);
+        let registration = self.registration(config);
         self.install(
             session_id,
             ExtensionSlot {
                 key: key.clone(),
-                config: config.clone(),
+                registration: registration.clone(),
                 placement: None,
                 scope_id: session_id.to_string(),
                 manager: Weak::new(),
@@ -1135,10 +1021,7 @@ impl ExtensionManager {
                 config_generation: AtomicU64::new(self.host.config_generation()),
                 runtime: OnceCell::new_with(Some(Runtime::Running(Arc::new(Extension {
                     key,
-                    config: config.clone(),
-                    resolved_config: config.clone(),
-                    platform: self.is_platform(&config),
-                    unprefixed: self.is_unprefixed(&config),
+                    registration,
                     client,
                     server_info: info,
                     tools_version: Arc::new(AtomicU64::new(0)),

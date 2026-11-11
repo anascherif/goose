@@ -548,3 +548,100 @@ async fn colliding_tool_names_are_rejected_by_default() {
         }
     }
 }
+
+/// Hands out `StaticToolsClient`s, counting connections; declines when `tools` is `None`.
+struct StaticConnector {
+    tools: Option<Vec<&'static str>>,
+    connects: AtomicUsize,
+}
+
+impl StaticConnector {
+    fn new(tools: Option<Vec<&'static str>>) -> Arc<Self> {
+        Arc::new(Self {
+            tools,
+            connects: AtomicUsize::new(0),
+        })
+    }
+}
+
+#[async_trait]
+impl Connector for StaticConnector {
+    async fn connect(
+        &self,
+        request: &ConnectRequest,
+    ) -> ExtensionResult<Option<Box<dyn McpClientTrait>>> {
+        assert_eq!(request.scope_id, "scope");
+        self.connects.fetch_add(1, Ordering::SeqCst);
+        Ok(self.tools.clone().map(|tools| {
+            Box::new(StaticToolsClient { tools: Some(tools) }) as Box<dyn McpClientTrait>
+        }))
+    }
+}
+
+fn registration_set(registrations: Vec<Registration>) -> ExtensionSet {
+    registrations
+        .into_iter()
+        .try_fold(
+            ExtensionSet::new("scope", None, vec![]).unwrap(),
+            ExtensionSet::with_registration,
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn host_registrations_connect_through_their_connector() {
+    let manager = manager();
+    let connector = StaticConnector::new(Some(vec!["echo", "hidden"]));
+    let registration = Registration::new("custom", connector.clone())
+        .with_available_tools(vec!["echo".to_string()]);
+    let lease = manager
+        .resolve(&registration_set(vec![registration.clone()]))
+        .await;
+
+    assert_eq!(tool_names(lease.tools().await.unwrap()), ["custom__echo"]);
+    let result = lease
+        .call(
+            rmcp::model::CallToolRequestParams::new("custom__echo"),
+            CallRequest::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .result
+        .await
+        .unwrap();
+    assert_ne!(result.is_error, Some(true));
+
+    // The same revision reuses the connection; a new one reconnects.
+    let same = manager
+        .resolve(&registration_set(vec![registration.clone()]))
+        .await;
+    same.tools().await.unwrap();
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
+    let bumped = manager
+        .resolve(&registration_set(vec![registration.with_revision(1)]))
+        .await;
+    bumped.tools().await.unwrap();
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn declining_connectors_contribute_no_tools_without_failing() {
+    let manager = manager();
+    let lease = manager
+        .resolve(&registration_set(vec![
+            Registration::new("declined", StaticConnector::new(None)),
+            Registration::new("first", StaticConnector::new(Some(vec!["tool"]))).unprefixed(),
+        ]))
+        .await;
+    assert_eq!(tool_names(lease.tools().await.unwrap()), ["tool"]);
+    assert!(lease.start().await.iter().all(|result| result.success));
+}
+
+#[test]
+fn registration_keys_must_be_unique_within_a_set() {
+    let set = ExtensionSet::new("scope", None, vec![builtin_config("dup")]).unwrap();
+    assert!(set
+        .with_registration(Registration::new("dup", StaticConnector::new(None)))
+        .is_err());
+}

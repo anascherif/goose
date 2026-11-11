@@ -24,8 +24,8 @@ use tracing::warn;
 use super::{
     get_tool_meta_value, get_tool_owner, get_tool_resource_uri, insert_trusted_tool_update_meta,
     recover_mangled_tool_name, remove_subagent_session_meta, remove_untrusted_mcp_app_meta,
-    ActionRequiredStream, CollisionPolicy, Extension, ExtensionLoadResult, ExtensionMutation,
-    ExtensionSlot, GooseMcpAppToolAttachment, StartupPolicy,
+    ActionRequiredStream, CollisionPolicy, Extension, ExtensionLoadResult, ExtensionManager,
+    ExtensionMutation, ExtensionSlot, GooseMcpAppToolAttachment, Registration, StartupPolicy,
     TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
 };
 use crate::action_required_manager::ActionRequiredManager;
@@ -58,12 +58,19 @@ fn require_str_parameter<'a>(value: &'a Value, name: &str) -> Result<&'a str, Er
     })
 }
 
+/// One selected extension: a config the manager connects, or a host registration.
+#[derive(Debug)]
+enum Selected {
+    Config(ExtensionConfig),
+    Registration(Registration),
+}
+
 #[derive(Debug)]
 pub struct ExtensionSet {
     scope_id: String,
     pub(super) working_dir: Option<PathBuf>,
     pub(super) container: Option<Container>,
-    extensions: Vec<ExtensionConfig>,
+    extensions: Vec<Selected>,
 }
 
 impl ExtensionSet {
@@ -78,7 +85,26 @@ impl ExtensionSet {
             scope_id: scope_id.into(),
             working_dir,
             container: None,
-            extensions,
+            extensions: extensions.into_iter().map(Selected::Config).collect(),
+        })
+    }
+
+    /// Select a host registration after the configs, rejecting a duplicate key.
+    pub fn with_registration(mut self, registration: Registration) -> Result<Self, ExtensionError> {
+        if self.keys().any(|key| key == registration.key) {
+            return Err(ExtensionError::ConfigError(format!(
+                "duplicate extension key: {}",
+                registration.key
+            )));
+        }
+        self.extensions.push(Selected::Registration(registration));
+        Ok(self)
+    }
+
+    fn keys(&self) -> impl Iterator<Item = String> + '_ {
+        self.extensions.iter().map(|selected| match selected {
+            Selected::Config(config) => config.key(),
+            Selected::Registration(registration) => registration.key.clone(),
         })
     }
 
@@ -91,8 +117,14 @@ impl ExtensionSet {
         &self.scope_id
     }
 
-    pub fn extensions(&self) -> &[ExtensionConfig] {
-        &self.extensions
+    pub(super) fn registrations<'a>(
+        &'a self,
+        manager: &'a ExtensionManager,
+    ) -> impl Iterator<Item = Registration> + 'a {
+        self.extensions.iter().map(|selected| match selected {
+            Selected::Config(config) => manager.registration(config.clone()),
+            Selected::Registration(registration) => registration.clone(),
+        })
     }
 }
 
@@ -131,7 +163,7 @@ impl ToolCatalog {
                 Err(error) => {
                     return Some(Err(format!(
                         "extension {} failed to start: {error}",
-                        slot.config.name()
+                        slot.registration.name
                     )))
                 }
             };
@@ -367,8 +399,12 @@ impl ExtensionLease {
         self.slots.iter().any(|slot| slot.key == key)
     }
 
+    /// The configs of config-backed extensions, in selection order.
     pub fn configs(&self) -> Vec<ExtensionConfig> {
-        self.slots.iter().map(|slot| slot.config.clone()).collect()
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.registration.config.clone())
+            .collect()
     }
 
     pub async fn read_resource_tool(
