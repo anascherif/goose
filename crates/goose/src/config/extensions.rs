@@ -497,7 +497,7 @@ extensions:
     fn test_get_extension_by_name_resolves_saved_entry_by_key() {
         let saved = ExtensionEntry {
             enabled: true,
-            config: ExtensionConfig::Stdio {
+            config: ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
                 name: "My Tool".to_string(),
                 description: "saved description".to_string(),
                 cmd: "my-tool".to_string(),
@@ -508,7 +508,7 @@ extensions:
                 cwd: None,
                 bundled: None,
                 available_tools: vec!["run".to_string()],
-            },
+            }),
         };
         let key = saved.config.key();
         assert_ne!(key, saved.config.name());
@@ -519,11 +519,11 @@ extensions:
         let resolved = get_extension_by_name_with_config(&config, &key).unwrap();
 
         match resolved {
-            ExtensionConfig::Stdio {
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
                 timeout,
                 available_tools,
                 ..
-            } => {
+            }) => {
                 assert_eq!(timeout, Some(120));
                 assert_eq!(available_tools, vec!["run".to_string()]);
             }
@@ -657,7 +657,10 @@ extensions:
             .get("brave-search")
             .expect("brave-search extension should parse");
         match &entry.config {
-            ExtensionConfig::Stdio { envs, .. } => {
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
+                envs,
+                ..
+            }) => {
                 assert_eq!(
                     envs.get_env().get("BRAVE_API_KEY"),
                     Some(&"test-key".to_string())
@@ -688,7 +691,10 @@ extensions:
             .expect("brave-search extension should parse when name is missing and env: is used");
         assert_eq!(entry.config.name(), "brave-search");
         match &entry.config {
-            ExtensionConfig::Stdio { envs, .. } => {
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
+                envs,
+                ..
+            }) => {
                 assert_eq!(
                     envs.get_env().get("BRAVE_API_KEY"),
                     Some(&"test-key".to_string())

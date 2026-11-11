@@ -219,7 +219,9 @@ The extraction preserves the runtime's behavior, with these necessary boundaries
 - `ExtensionSet` and session selection contain `Registration`s, not application
   configs. Goose owns its persisted `ExtensionConfig` (including builtin/platform
   variants), container placement, registry lookup, and config-to-registration
-  conversion. The GDK's transport `ExtensionConfig` accepts only stdio and HTTP;
+  conversion. Its `External` variant wraps the GDK transport config directly,
+  sharing serialization, environment filtering, and secret resolution rather than
+  copying them. The GDK's transport `ExtensionConfig` accepts only stdio and HTTP;
   `manager.registration(config)` constructs a registration for those transports.
 - Registrations carry connector revisions, tool filters, and optional opaque host
   metadata. Goose uses that metadata to persist its unchanged config schema.

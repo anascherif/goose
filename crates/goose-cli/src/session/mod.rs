@@ -375,18 +375,20 @@ impl CliSession {
                 .to_string()
         });
 
-        Ok(ExtensionConfig::Stdio {
-            name,
-            cmd,
-            args: parts,
-            envs: Envs::new(envs),
-            env_keys: Vec::new(),
-            description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
-            timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
-            cwd: None,
-            bundled: None,
-            available_tools: Vec::new(),
-        })
+        Ok(ExtensionConfig::External(
+            goose_agent::extension::ExtensionConfig::Stdio {
+                name,
+                cmd,
+                args: parts,
+                envs: Envs::new(envs),
+                env_keys: Vec::new(),
+                description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
+                timeout: Some(goose::agents::extension_config::DEFAULT_EXTENSION_TIMEOUT),
+                cwd: None,
+                bundled: None,
+                available_tools: Vec::new(),
+            },
+        ))
     }
 
     pub fn parse_streamable_http_extension(extension_url: &str, timeout: u64) -> ExtensionConfig {
@@ -411,7 +413,7 @@ impl CliSession {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "unnamed".to_string());
 
-        ExtensionConfig::StreamableHttp {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name,
             uri: extension_url.to_string(),
             envs: Envs::new(HashMap::new()),
@@ -425,7 +427,7 @@ impl CliSession {
             scopes: vec![],
             bundled: None,
             available_tools: Vec::new(),
-        }
+        })
     }
 
     /// Parse builtin extension names (comma-separated) into ExtensionConfigs
@@ -2925,7 +2927,7 @@ mod tests {
 
     #[test_case(
         "/usr/bin/my-server",
-        ExtensionConfig::Stdio {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name: "my-server".into(),
             cmd: "/usr/bin/my-server".into(),
             args: vec![],
@@ -2936,12 +2938,12 @@ mod tests {
             cwd: None,
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "name_from_cmd_basename"
     )]
     #[test_case(
         "MY_SECRET=s3cret npx -y @modelcontextprotocol/server-everything",
-        ExtensionConfig::Stdio {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name: "npx".into(),
             cmd: "npx".into(),
             args: vec!["-y".into(), "@modelcontextprotocol/server-everything".into()],
@@ -2952,12 +2954,12 @@ mod tests {
             cwd: None,
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "env_prefix_name_from_cmd"
     )]
     #[test_case(
         r#""/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/bin/java" -classpath "/path/with spaces/lib.jar" Main"#,
-        ExtensionConfig::Stdio {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name: "java".into(),
             cmd: "/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/bin/java".into(),
             args: vec!["-classpath".into(), "/path/with spaces/lib.jar".into(), "Main".into()],
@@ -2968,7 +2970,7 @@ mod tests {
             cwd: None,
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "quoted_path_with_spaces"
     )]
     fn test_parse_stdio_extension(input: &str, expected: ExtensionConfig) {
@@ -2992,16 +2994,16 @@ mod tests {
         assert_eq!(absolute.name(), "memory");
         assert!(matches!(
             absolute,
-            ExtensionConfig::Stdio { cmd, .. } if cmd == "/usr/local/bin/mcp"
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio { cmd, .. }) if cmd == "/usr/local/bin/mcp"
         ));
         let config = CliSession::parse_stdio_extension("memory:API_KEY=k npx -y srv").unwrap();
-        let ExtensionConfig::Stdio {
+        let ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name,
             cmd,
             args,
             envs,
             ..
-        } = config
+        }) = config
         else {
             panic!("expected a stdio extension");
         };
@@ -3131,7 +3133,7 @@ mod tests {
 
     #[test_case(
         "https://mcp.kiwi.com", 300,
-        ExtensionConfig::StreamableHttp {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name: "mcp_kiwi_com".into(),
             uri: "https://mcp.kiwi.com".into(),
             envs: Envs::default(),
@@ -3145,12 +3147,12 @@ mod tests {
             scopes: vec![],
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "name_from_host"
     )]
     #[test_case(
         "http://localhost:8080/api", 300,
-        ExtensionConfig::StreamableHttp {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name: "localhost_8080_api".into(),
             uri: "http://localhost:8080/api".into(),
             envs: Envs::default(),
@@ -3164,12 +3166,12 @@ mod tests {
             scopes: vec![],
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "port_and_path"
     )]
     #[test_case(
         "http://localhost:9090/other", 300,
-        ExtensionConfig::StreamableHttp {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name: "localhost_9090_other".into(),
             uri: "http://localhost:9090/other".into(),
             envs: Envs::default(),
@@ -3183,7 +3185,7 @@ mod tests {
             scopes: vec![],
             bundled: None,
             available_tools: vec![],
-        }
+        })
         ; "different_port_and_path"
     )]
     fn test_parse_streamable_http_extension(url: &str, timeout: u64, expected: ExtensionConfig) {

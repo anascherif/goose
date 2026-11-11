@@ -320,7 +320,7 @@ fn extension_from_dto(dto: RecipeExtensionDto) -> Result<ExtensionConfig> {
             cwd,
             bundled,
             available_tools,
-        } => ExtensionConfig::Stdio {
+        } => ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name,
             description: description.unwrap_or_default(),
             cmd,
@@ -331,7 +331,7 @@ fn extension_from_dto(dto: RecipeExtensionDto) -> Result<ExtensionConfig> {
             cwd,
             bundled,
             available_tools: available_tools.unwrap_or_default(),
-        },
+        }),
         RecipeExtensionDto::StreamableHttp {
             name,
             description,
@@ -346,7 +346,7 @@ fn extension_from_dto(dto: RecipeExtensionDto) -> Result<ExtensionConfig> {
             scopes,
             bundled,
             available_tools,
-        } => ExtensionConfig::StreamableHttp {
+        } => ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name,
             description: description.unwrap_or_default(),
             uri,
@@ -360,7 +360,7 @@ fn extension_from_dto(dto: RecipeExtensionDto) -> Result<ExtensionConfig> {
             scopes,
             bundled,
             available_tools: available_tools.unwrap_or_default(),
-        },
+        }),
     })
 }
 
@@ -394,7 +394,7 @@ fn extension_to_dto(extension: ExtensionConfig) -> Result<RecipeExtensionDto> {
             bundled,
             available_tools: available_tools_to_wire(available_tools),
         },
-        ExtensionConfig::Stdio {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
             name,
             description,
             cmd,
@@ -405,7 +405,7 @@ fn extension_to_dto(extension: ExtensionConfig) -> Result<RecipeExtensionDto> {
             cwd,
             bundled,
             available_tools,
-        } => RecipeExtensionDto::Stdio {
+        }) => RecipeExtensionDto::Stdio {
             name,
             description: Some(description),
             cmd,
@@ -417,7 +417,7 @@ fn extension_to_dto(extension: ExtensionConfig) -> Result<RecipeExtensionDto> {
             bundled,
             available_tools: available_tools_to_wire(available_tools),
         },
-        ExtensionConfig::StreamableHttp {
+        ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
             name,
             description,
             uri,
@@ -431,7 +431,7 @@ fn extension_to_dto(extension: ExtensionConfig) -> Result<RecipeExtensionDto> {
             scopes,
             bundled,
             available_tools,
-        } => RecipeExtensionDto::StreamableHttp {
+        }) => RecipeExtensionDto::StreamableHttp {
             name,
             description: Some(description),
             uri,
@@ -586,22 +586,24 @@ mod tests {
             extension => panic!("expected builtin extension, got {extension:?}"),
         }
         match &recipe.extensions.as_ref().unwrap()[1] {
-            ExtensionConfig::Stdio {
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
                 envs,
                 available_tools,
                 ..
-            } => {
+            }) => {
                 assert_eq!(envs.get_env()["LOCAL_MODE"], "true");
                 assert_eq!(available_tools, &vec!["run".to_string()]);
             }
             extension => panic!("expected stdio extension, got {extension:?}"),
         }
         match &recipe.extensions.as_ref().unwrap()[2] {
-            ExtensionConfig::StreamableHttp {
-                envs,
-                available_tools,
-                ..
-            } => {
+            ExtensionConfig::External(
+                goose_agent::extension::ExtensionConfig::StreamableHttp {
+                    envs,
+                    available_tools,
+                    ..
+                },
+            ) => {
                 assert_eq!(envs.get_env()["REMOTE_MODE"], "true");
                 assert_eq!(available_tools, &vec!["fetch".to_string()]);
             }

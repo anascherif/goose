@@ -41,12 +41,14 @@ pub(super) fn registration(
         | ExtensionConfig::Platform {
             available_tools, ..
         }
-        | ExtensionConfig::Stdio {
-            available_tools, ..
-        }
-        | ExtensionConfig::StreamableHttp {
-            available_tools, ..
-        } => available_tools.clone(),
+        | ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
+            available_tools,
+            ..
+        })
+        | ExtensionConfig::External(goose_agent::extension::ExtensionConfig::StreamableHttp {
+            available_tools,
+            ..
+        }) => available_tools.clone(),
     };
     registration = registration.with_available_tools(available_tools);
     if def.is_some() {
@@ -105,14 +107,14 @@ impl Connector for GooseConnector {
                 super::builtin::connect(name, self.container.as_ref(), context, self.host.as_ref())
                     .await?
             }
-            ExtensionConfig::Stdio {
+            ExtensionConfig::External(goose_agent::extension::ExtensionConfig::Stdio {
                 cmd,
                 args,
                 envs,
                 timeout,
                 cwd,
                 ..
-            } => {
+            }) => {
                 context.timeout = std::time::Duration::from_secs(
                     timeout.unwrap_or_else(|| self.host.default_timeout()),
                 );
@@ -134,9 +136,11 @@ impl Connector for GooseConnector {
                     .await?,
                 )
             }
-            ExtensionConfig::StreamableHttp { .. } => {
+            ExtensionConfig::External(
+                goose_agent::extension::ExtensionConfig::StreamableHttp { .. },
+            ) => {
                 let external = resolved.external().expect("HTTP config");
-                let registration = Registration::from_config(external, self.host.clone());
+                let registration = Registration::from_config(external.clone(), self.host.clone());
                 return registration.connector().connect(request).await;
             }
         };
