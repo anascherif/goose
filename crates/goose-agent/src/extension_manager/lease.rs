@@ -10,7 +10,7 @@ use std::sync::Arc;
 use futures::stream;
 use futures::{FutureExt, Stream};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, ErrorData, GetPromptResult,
+    CallToolRequestParams, ContentBlock, ErrorCode, ErrorData, GetPromptResult,
     ListResourcesResult, ListToolsResult, Prompt, ReadResourceResult, Resource, ResourceContents,
     ServerNotification, Tool,
 };
@@ -21,12 +21,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
+use super::host::ExtensionHost;
 use super::{
-    get_tool_meta_value, get_tool_owner, get_tool_resource_uri, insert_trusted_tool_update_meta,
-    recover_mangled_tool_name, remove_subagent_session_meta, remove_untrusted_mcp_app_meta,
-    ActionRequiredStream, Extension, ExtensionLoadResult, ExtensionManager, ExtensionMutation,
-    ExtensionSlot, GooseMcpAppToolAttachment, Registration, StartupPolicy,
-    TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
+    get_tool_owner, recover_mangled_tool_name, remove_reserved_meta, ActionRequiredStream,
+    ClientContext, Extension, ExtensionLoadResult, ExtensionManager, ExtensionSlot, Registration,
+    StartupPolicy, TOOL_CALL_NOTIFICATION_CHANNEL_CAPACITY,
 };
 use crate::action_required_manager::ActionRequiredManager;
 use crate::container::Container;
@@ -36,10 +35,6 @@ use crate::mcp_client::McpClientTrait;
 use crate::tool_execution::{ToolCallContext, ToolCallNotificationEmitter, ToolCallResult};
 use crate::tool_visibility::is_tool_visible_to_app;
 use goose_provider_types::conversation::message::Message;
-
-pub const EXTENSION_MANAGER_NAME: &str = "Extension Manager";
-pub const LIST_RESOURCES_TOOL_NAME: &str = "list_resources";
-pub const READ_RESOURCE_TOOL_NAME: &str = "read_resource";
 
 fn require_str_parameter<'a>(value: &'a Value, name: &str) -> Result<&'a str, ErrorData> {
     let value = value.get(name).ok_or_else(|| {
@@ -154,6 +149,7 @@ impl ToolCatalog {
         scope_id: &str,
         slots: &[Arc<ExtensionSlot>],
         startup: StartupPolicy,
+        host: &dyn ExtensionHost,
     ) -> Result<Self, String> {
         let outcomes = futures::future::join_all(slots.iter().map(|slot| async move {
             let extension = match slot.outcome().await {
@@ -191,7 +187,9 @@ impl ToolCatalog {
                 Err(error) => warn!(%error, "omitting extension from the tool catalog"),
             }
         }
-        let extension_manager_key = name_to_key(EXTENSION_MANAGER_NAME);
+        let supports_resources = lists
+            .iter()
+            .any(|(extension, _)| extension.supports_resources());
 
         let mut entries: Vec<CatalogEntry> = Vec::new();
         let mut by_name = HashMap::new();
@@ -211,13 +209,7 @@ impl ToolCatalog {
                     .strip_prefix(&format!("{}__", extension.key))
                     .unwrap_or(&tool.name)
                     .to_string();
-                if extension.key == extension_manager_key
-                    && !supports_resources
-                    && matches!(
-                        server_name.as_str(),
-                        LIST_RESOURCES_TOOL_NAME | READ_RESOURCE_TOOL_NAME
-                    )
-                {
+                if !host.exposes_tool(&extension.key, &server_name, supports_resources) {
                     continue;
                 }
                 let mut tool = tool.clone();
@@ -264,7 +256,8 @@ pub struct ExtensionLease {
     slots: Vec<Arc<ExtensionSlot>>,
     tool_catalog: Arc<OnceCell<Result<ToolCatalog, String>>>,
     action_required: Arc<ActionRequiredManager>,
-    hydrate_mcp_apps: bool,
+    host: Arc<dyn ExtensionHost>,
+    client_context: Arc<ClientContext>,
     startup_policy: StartupPolicy,
 }
 
@@ -279,8 +272,8 @@ impl ExtensionLease {
         scope_id: impl Into<String>,
         working_dir: Option<PathBuf>,
         slots: Vec<Arc<ExtensionSlot>>,
-        action_required: Arc<ActionRequiredManager>,
-        hydrate_mcp_apps: bool,
+        host: Arc<dyn ExtensionHost>,
+        client_context: Arc<ClientContext>,
         startup_policy: StartupPolicy,
     ) -> Self {
         Self {
@@ -289,8 +282,9 @@ impl ExtensionLease {
             working_dir,
             slots,
             tool_catalog: Arc::new(OnceCell::new()),
-            action_required,
-            hydrate_mcp_apps,
+            action_required: host.action_required(),
+            host,
+            client_context,
             startup_policy,
         }
     }
@@ -298,7 +292,14 @@ impl ExtensionLease {
     /// Built once per lease. A failure is pinned too: resolve a new lease to retry.
     async fn tool_catalog(&self) -> anyhow::Result<&ToolCatalog> {
         self.tool_catalog
-            .get_or_init(|| ToolCatalog::build(&self.scope_id, &self.slots, self.startup_policy))
+            .get_or_init(|| {
+                ToolCatalog::build(
+                    &self.scope_id,
+                    &self.slots,
+                    self.startup_policy,
+                    self.host.as_ref(),
+                )
+            })
             .await
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))
@@ -802,9 +803,16 @@ impl ExtensionLease {
             None => call_context,
         };
 
-        let mcp_app_call = McpAppCall::from_resolved(&resolved, self.hydrate_mcp_apps);
+        let tool = resolved.tool.clone();
+        let extension_key = resolved.extension.key.clone();
+        let client_context = Arc::clone(&self.client_context);
+        let host = Arc::clone(&self.host);
         let server_name = resolved.server_name.to_string();
-        let is_platform_extension = resolved.extension.is_platform();
+        let reserved_meta = if resolved.extension.is_platform() {
+            &[]
+        } else {
+            self.host.reserved_result_meta_keys()
+        };
         let session_id = self.scope_id.clone();
         let result = async move {
             let mut result = client
@@ -819,16 +827,20 @@ impl ExtensionLease {
                     ServiceError::McpError(error_data) => error_data,
                     _ => ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None),
                 })?;
-            remove_untrusted_mcp_app_meta(&mut result);
-            if !is_platform_extension {
-                ExtensionMutation::take(&mut result);
-                remove_subagent_session_meta(&mut result);
-            }
-            if let Some(mcp_app_call) = mcp_app_call {
-                mcp_app_call
-                    .attach_resource(&*client, &session_id, &mut result, cancellation_token)
-                    .await;
-            }
+            remove_reserved_meta(&mut result, reserved_meta);
+            host.process_result(
+                super::host::ResultContext {
+                    scope_id: &session_id,
+                    extension: &extension_key,
+                    server_tool_name: &server_name,
+                    tool: &tool,
+                    client_context: &client_context,
+                    client: &*client,
+                    cancellation_token,
+                },
+                &mut result,
+            )
+            .await;
             Ok(result)
         };
 
@@ -913,57 +925,5 @@ impl From<&ToolCallContext> for CallRequest {
             notification_emitter: ctx.notification_emitter().cloned(),
             container: ctx.container().cloned(),
         }
-    }
-}
-
-struct McpAppCall {
-    server_tool_name: String,
-    extension_key: String,
-    resource_uri: String,
-    tool_meta: Option<serde_json::Value>,
-}
-
-impl McpAppCall {
-    fn from_resolved(resolved: &ResolvedTool<'_>, host_supports_apps: bool) -> Option<Self> {
-        if !host_supports_apps {
-            return None;
-        }
-        Some(Self {
-            server_tool_name: resolved.server_name.to_string(),
-            extension_key: resolved.extension.key.clone(),
-            resource_uri: get_tool_resource_uri(resolved.tool)?,
-            tool_meta: get_tool_meta_value(resolved.tool),
-        })
-    }
-
-    async fn attach_resource(
-        self,
-        client: &dyn McpClientTrait,
-        session_id: &str,
-        result: &mut CallToolResult,
-        cancellation_token: CancellationToken,
-    ) {
-        if result.is_error == Some(true) {
-            return;
-        }
-        let mut attachment = GooseMcpAppToolAttachment {
-            tool_name: self.server_tool_name,
-            tool_name_is_actual: true,
-            extension_name: self.extension_key,
-            resource_uri: self.resource_uri.clone(),
-            tool_meta: self.tool_meta,
-            resource_result: None,
-            read_error: None,
-        };
-        match client
-            .read_resource(session_id, &self.resource_uri, cancellation_token)
-            .await
-        {
-            Ok(resource_result) => {
-                attachment.resource_result = serde_json::to_value(&resource_result).ok();
-            }
-            Err(error) => attachment.read_error = Some(error.to_string()),
-        }
-        insert_trusted_tool_update_meta(result, &attachment);
     }
 }

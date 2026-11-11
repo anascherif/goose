@@ -202,8 +202,8 @@ this crate too. Consumers import the moved types directly from `goose_agent`.
 
 The extraction preserves the runtime's behavior, with these necessary boundaries:
 
-- `ExtensionHost` supplies session selection/persistence, config resolution and
-  lookup, config generation, platform/builtin factories, command search paths, and host identity.
+- `ExtensionHost` supplies session selection/persistence, config resolution,
+  config generation, platform/builtin factories, command search paths, and host identity.
   `goose` implements it using its existing application services and retains a
   thin manager adapter for application constructors, client defaults, and session snapshots.
   Per-session client negotiation and config-generation invalidation remain in the runtime.
@@ -219,6 +219,12 @@ The extraction preserves the runtime's behavior, with these necessary boundaries
 - Platform extension registration and application-specific types such as
   `ToolInfo` remain in `goose`. Its recipe DTO conversions are functions rather
   than foreign-trait impls because `ExtensionConfig` now belongs to this crate.
+
+Goose's mutation commands, private MCP App result attachments, and resource-tool
+visibility rules live in its adapter. `ExtensionHost::exposes_tool` filters the
+catalog, `reserved_result_meta_keys` prevents external servers from claiming
+host-only result metadata, and `process_result` sanitizes/decorates results using
+the exact advertised tool and client. These hooks default to no application policy.
 
 Transports are opt-in Cargo features (native only):
 

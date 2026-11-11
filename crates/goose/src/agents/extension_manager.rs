@@ -8,10 +8,15 @@ use crate::agents::platform_extensions::{PlatformExtensionContext, PLATFORM_EXTE
 use crate::session::{EnabledExtensionsState, Session};
 use goose_agent::extension::name_to_key;
 
+mod apps;
 mod goose_host;
+pub use apps::TRUSTED_TOOL_UPDATE_META_KEY;
+mod mutation;
 use super::GoosePlatform;
 use goose_agent::extension_manager::{ClientContext, ExtensionLease};
 use goose_agent::mcp_client::{GooseMcpClientCapabilities, GooseMcpHostInfo};
+pub(crate) use mutation::applying_mutation;
+pub use mutation::ExtensionMutation;
 
 /// Wires the extension runtime to Goose's application services.
 pub struct ExtensionManager {

@@ -5,6 +5,7 @@ use crate::extension_manager::host::PlatformExtension;
 use crate::extension_manager::host::{ExtensionAuth, StaticOAuthClientConfig};
 use crate::tool_execution::ToolCallContext;
 use async_trait::async_trait;
+use futures::FutureExt;
 use rmcp::model::{InitializeResult, JsonObject, ListToolsResult};
 #[cfg(feature = "mcp-http")]
 use rmcp::transport::auth::{CredentialStore, InMemoryCredentialStore};
@@ -67,9 +68,6 @@ impl ExtensionHost for TestHost {
         Ok(config)
     }
 
-    fn extension_by_name(&self, _name: &str) -> Option<ExtensionConfig> {
-        None
-    }
     fn action_required(&self) -> Arc<ActionRequiredManager> {
         Arc::clone(&self.action_required)
     }
@@ -425,7 +423,6 @@ async fn minimal_host_defaults_reject_runtime_changes_and_authorization() {
     assert!(manager.enable("scope", config.clone()).await.is_err());
     assert!(host.select("scope", config.clone()).await.is_err());
     assert!(host.disable("scope", "server").await.is_err());
-    assert!(host.extension_by_name("server").is_none());
     assert_eq!(host.resolve_config(config.clone()).await.unwrap(), config);
     #[cfg(feature = "mcp-http")]
     {
@@ -826,4 +823,30 @@ async fn tool_call_batches_run_concurrently_and_keep_notifications_sent_with_res
         ));
         drop(notify);
     }
+}
+
+#[test]
+fn reserved_result_metadata_is_removed_without_touching_other_keys() {
+    let mut result = CallToolResult::success(vec![]);
+    result.meta = Some(MetaObject(
+        serde_json::from_value(serde_json::json!({
+            "host_command": {"action": "enable"}, "other": 1
+        }))
+        .unwrap(),
+    ));
+    remove_reserved_meta(&mut result, &["host_command"]);
+    assert_eq!(
+        result.meta.unwrap().0,
+        serde_json::from_value::<rmcp::model::JsonObject>(serde_json::json!({"other": 1})).unwrap()
+    );
+
+    let mut result = CallToolResult::success(vec![]);
+    result.meta = Some(MetaObject(
+        serde_json::from_value(serde_json::json!({
+            "host_command": true
+        }))
+        .unwrap(),
+    ));
+    remove_reserved_meta(&mut result, &["host_command"]);
+    assert!(result.meta.is_none());
 }

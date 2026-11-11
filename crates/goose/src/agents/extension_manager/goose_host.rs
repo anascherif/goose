@@ -90,8 +90,28 @@ impl ExtensionHost for GooseExtensionHost {
         config.resolve(Config::global()).await
     }
 
-    fn extension_by_name(&self, name: &str) -> Option<ExtensionConfig> {
-        crate::config::get_extension_by_name(name)
+    fn reserved_result_meta_keys(&self) -> &'static [&'static str] {
+        &[
+            super::mutation::EXTENSION_MUTATION_META_KEY,
+            "subagent_session_id",
+        ]
+    }
+
+    fn exposes_tool(&self, extension: &str, tool: &str, catalog_has_resources: bool) -> bool {
+        use crate::agents::platform_extensions::ext_manager::{
+            LIST_RESOURCES_TOOL_NAME, READ_RESOURCE_TOOL_NAME,
+        };
+        extension != "extensionmanager"
+            || catalog_has_resources
+            || !matches!(tool, LIST_RESOURCES_TOOL_NAME | READ_RESOURCE_TOOL_NAME)
+    }
+
+    async fn process_result(
+        &self,
+        context: goose_agent::extension_manager::host::ResultContext<'_>,
+        result: &mut rmcp::model::CallToolResult,
+    ) {
+        super::apps::process_result(context, result).await;
     }
 
     fn action_required(&self) -> Arc<ActionRequiredManager> {

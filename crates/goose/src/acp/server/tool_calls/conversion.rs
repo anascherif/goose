@@ -1,3 +1,4 @@
+use crate::agents::extension_manager::TRUSTED_TOOL_UPDATE_META_KEY;
 use crate::conversation::message::{Message, ToolNameParts, ToolRequest, ToolResponse};
 use crate::mcp_utils::ToolResult;
 use agent_client_protocol::schema::v1::{
@@ -5,7 +6,6 @@ use agent_client_protocol::schema::v1::{
     ImageContent, Meta, TextContent, TextResourceContents, ToolCall, ToolCallContent, ToolCallId,
     ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
-use goose_agent::extension_manager::TRUSTED_TOOL_UPDATE_META_KEY;
 use rmcp::model::{CallToolResult, ContentBlock as RmcpContentBlock, ResourceContents};
 
 use super::super::message_meta::merge_message_meta;

@@ -1,8 +1,9 @@
+use super::ExtensionMutation;
 use super::*;
 use futures::StreamExt;
 use goose_agent::extension::ExtensionConfig;
 use goose_agent::extension_manager::{
-    get_tool_owner, is_tool_owned_by_extension, CallRequest, ExtensionMutation, ExtensionSet,
+    get_tool_owner, is_tool_owned_by_extension, CallRequest, ExtensionSet,
 };
 use goose_agent::mcp_client::McpClientTrait;
 use goose_agent::tool_execution::{ToolCallContext, ToolCallNotificationEmitter};

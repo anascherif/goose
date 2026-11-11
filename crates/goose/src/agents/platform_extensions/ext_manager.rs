@@ -1,11 +1,11 @@
 use crate::agents::extension_manager::is_hidden_extension;
+use crate::agents::extension_manager::ExtensionMutation;
 use crate::agents::platform_extensions::PlatformExtensionContext;
 use crate::config::{get_all_extensions, get_extension_by_name};
 use crate::session::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_agent::extension::{name_to_key, ExtensionConfig};
-use goose_agent::extension_manager::ExtensionMutation;
 use goose_agent::mcp_client::{Error, McpClientTrait};
 use goose_agent::tool_execution::ToolCallContext;
 use indoc::indoc;
@@ -63,7 +63,8 @@ pub struct ListResourcesParams {
     pub extension_name: Option<String>,
 }
 
-use goose_agent::extension_manager::{LIST_RESOURCES_TOOL_NAME, READ_RESOURCE_TOOL_NAME};
+pub const LIST_RESOURCES_TOOL_NAME: &str = "list_resources";
+pub const READ_RESOURCE_TOOL_NAME: &str = "read_resource";
 pub const SEARCH_AVAILABLE_EXTENSIONS_TOOL_NAME: &str = "search_available_extensions";
 pub const MANAGE_EXTENSIONS_TOOL_NAME: &str = "manage_extensions";
 pub const MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE: &str = "extensionmanager__manage_extensions";

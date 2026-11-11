@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use futures::FutureExt;
 use futures::Stream;
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -18,9 +17,8 @@ use crate::action_required_manager::ActionRequiredManager;
 use crate::container::Container;
 use crate::extension::{name_to_key, ExtensionConfig, ExtensionError, ExtensionResult};
 use crate::mcp_client::{GooseMcpClientCapabilities, McpClientTrait};
-use crate::tool_execution::ToolCallResult;
 use host::{ExtensionHost, ExtensionSession};
-use rmcp::model::{CallToolResult, ErrorCode, ErrorData, MetaObject, ServerConfig, Tool};
+use rmcp::model::{CallToolResult, MetaObject, ServerConfig, Tool};
 use serde_json::Value;
 
 mod builtin;
@@ -33,44 +31,12 @@ mod stdio;
 #[cfg(feature = "mcp-http")]
 mod streamable_http;
 
-pub use lease::{
-    CallRequest, ExtensionLease, ExtensionSet, LeaseId, EXTENSION_MANAGER_NAME,
-    LIST_RESOURCES_TOOL_NAME, READ_RESOURCE_TOOL_NAME,
-};
+pub use lease::{CallRequest, ExtensionLease, ExtensionSet, LeaseId};
 pub use operation::{
     instructions_prompt, ExtensionOperation, LeaseResolver, PendingCall, ToolCallBatch, TurnLease,
     EXPIRED_TOOL_REQUEST,
 };
 pub use registration::{ConnectRequest, Connector, Registration};
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "action", rename_all = "lowercase")]
-pub enum ExtensionMutation {
-    Enable { name: String },
-    Disable { name: String },
-}
-
-const EXTENSION_MUTATION_META_KEY: &str = "goose_extension_mutation";
-
-impl ExtensionMutation {
-    pub fn attach(self, result: &mut CallToolResult) {
-        let mut meta = result.meta.take().map(|m| m.0).unwrap_or_default();
-        meta.insert(
-            EXTENSION_MUTATION_META_KEY.to_string(),
-            serde_json::to_value(self).expect("mutation serializes"),
-        );
-        result.meta = Some(MetaObject(meta));
-    }
-
-    pub fn take(result: &mut CallToolResult) -> Option<Self> {
-        let meta = result.meta.as_mut()?;
-        let value = meta.0.remove(EXTENSION_MUTATION_META_KEY)?;
-        if meta.0.is_empty() {
-            result.meta = None;
-        }
-        serde_json::from_value(value).ok()
-    }
-}
 
 type McpClientBox = Arc<dyn McpClientTrait>;
 
@@ -415,13 +381,6 @@ pub struct ClientContext {
 }
 
 impl ClientContext {
-    fn hydrates_mcp_apps(&self) -> bool {
-        match &self.capabilities.host_info {
-            Some(host_info) if host_info.explicit_extensions => host_info.mcpui_enabled(),
-            _ => self.capabilities.mcpui,
-        }
-    }
-
     fn negotiates_like(&self, other: &ClientContext) -> bool {
         let (a, b) = (&self.capabilities, &other.capabilities);
         self.name == other.name
@@ -436,23 +395,6 @@ impl ClientContext {
             }
     }
 }
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GooseMcpAppToolAttachment {
-    pub tool_name: String,
-    pub tool_name_is_actual: bool,
-    pub extension_name: String,
-    pub resource_uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_meta: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub read_error: Option<String>,
-}
-
-pub const TRUSTED_TOOL_UPDATE_META_KEY: &str = "__goose_tool_update_meta";
 
 /// Manages goose extensions / MCP clients and their interactions
 pub struct ExtensionManager {
@@ -571,10 +513,6 @@ pub fn recover_mangled_tool_name<'a>(
     matched.map(|s| s.to_string())
 }
 
-fn get_tool_meta_value(tool: &Tool) -> Option<Value> {
-    tool.meta.as_ref().map(|meta| Value::Object(meta.0.clone()))
-}
-
 pub fn get_tool_resource_uri(tool: &Tool) -> Option<String> {
     tool.meta
         .as_ref()
@@ -585,64 +523,16 @@ pub fn get_tool_resource_uri(tool: &Tool) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn remove_untrusted_mcp_app_meta(result: &mut CallToolResult) {
+fn remove_reserved_meta(result: &mut CallToolResult, keys: &[&str]) {
     let Some(meta) = result.meta.as_mut() else {
         return;
     };
-
-    meta.0.remove(TRUSTED_TOOL_UPDATE_META_KEY);
-
-    let remove_goose = meta
-        .0
-        .get_mut("goose")
-        .and_then(Value::as_object_mut)
-        .map(|goose_meta| {
-            goose_meta.remove("mcpApp");
-            goose_meta.is_empty()
-        })
-        .unwrap_or(false);
-
-    if remove_goose {
-        meta.0.remove("goose");
+    for key in keys {
+        meta.0.remove(*key);
     }
-
     if meta.0.is_empty() {
         result.meta = None;
     }
-}
-
-fn remove_subagent_session_meta(result: &mut CallToolResult) {
-    let Some(meta) = result.meta.as_mut() else {
-        return;
-    };
-
-    meta.0.remove("subagent_session_id");
-
-    if meta.0.is_empty() {
-        result.meta = None;
-    }
-}
-
-fn insert_trusted_tool_update_meta(
-    result: &mut CallToolResult,
-    attachment: &GooseMcpAppToolAttachment,
-) {
-    let Ok(attachment_value) = serde_json::to_value(attachment) else {
-        return;
-    };
-
-    let mut meta_map = result
-        .meta
-        .as_ref()
-        .map(|meta| meta.0.clone())
-        .unwrap_or_default();
-    let mut trusted_meta = serde_json::Map::new();
-    trusted_meta.insert("mcpApp".to_string(), attachment_value);
-    meta_map.insert(
-        TRUSTED_TOOL_UPDATE_META_KEY.to_string(),
-        Value::Object(trusted_meta),
-    );
-    result.meta = Some(MetaObject(meta_map));
 }
 
 impl ExtensionManager {
@@ -691,8 +581,8 @@ impl ExtensionManager {
             scope_id,
             working_dir,
             slots,
-            self.host.action_required(),
-            client.hydrates_mcp_apps(),
+            Arc::clone(&self.host),
+            Arc::new(client.clone()),
             self.startup_policy,
         )
     }
@@ -928,50 +818,6 @@ impl ExtensionManager {
 
     pub async fn disable(&self, session_id: &str, key: &str) -> ExtensionResult<bool> {
         self.host.disable(session_id, key).await
-    }
-
-    pub async fn apply(
-        self: &Arc<Self>,
-        mutation: ExtensionMutation,
-        session_id: &str,
-    ) -> ExtensionResult<()> {
-        match mutation {
-            ExtensionMutation::Enable { name } => {
-                let config = self.host.extension_by_name(&name).ok_or_else(|| {
-                    ExtensionError::ConfigError(format!("Extension '{}' not found", name))
-                })?;
-                self.enable(session_id, config).await
-            }
-            ExtensionMutation::Disable { name } => {
-                self.disable(session_id, &name_to_key(&name)).await?;
-                Ok(())
-            }
-        }
-    }
-
-    pub fn applying_mutation(
-        self: &Arc<Self>,
-        result: ToolCallResult,
-        session_id: &str,
-    ) -> ToolCallResult {
-        let manager = Arc::clone(self);
-        let session_id = session_id.to_string();
-        let inner = result.result;
-        ToolCallResult {
-            result: Box::new(
-                async move {
-                    let mut result = inner.await?;
-                    if let Some(mutation) = ExtensionMutation::take(&mut result) {
-                        manager.apply(mutation, &session_id).await.map_err(|e| {
-                            ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
-                        })?;
-                    }
-                    Ok(result)
-                }
-                .boxed(),
-            ),
-            ..result
-        }
     }
 
     async fn install(&self, session_id: &str, slot: ExtensionSlot) {

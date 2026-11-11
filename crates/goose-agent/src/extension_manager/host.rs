@@ -9,7 +9,21 @@ use rmcp::transport::auth::{CredentialStore, InMemoryCredentialStore};
 #[cfg(feature = "mcp-http")]
 use rmcp::transport::AuthorizationManager;
 
-use super::ExtensionManager;
+use super::{ClientContext, ExtensionManager};
+use rmcp::model::{CallToolResult, Tool};
+use tokio_util::sync::CancellationToken;
+
+/// Inputs for host-specific tool-result decoration.
+pub struct ResultContext<'a> {
+    pub scope_id: &'a str,
+    pub extension: &'a str,
+    pub server_tool_name: &'a str,
+    pub tool: &'a Tool,
+    pub client_context: &'a ClientContext,
+    pub client: &'a dyn McpClientTrait,
+    pub cancellation_token: CancellationToken,
+}
+
 use crate::action_required_manager::ActionRequiredManager;
 use crate::container::Container;
 use crate::extension::{ExtensionConfig, ExtensionResult, DEFAULT_EXTENSION_TIMEOUT};
@@ -105,9 +119,23 @@ pub trait ExtensionHost: Send + Sync {
         Ok(config)
     }
 
-    fn extension_by_name(&self, _name: &str) -> Option<ExtensionConfig> {
-        None
+    /// Result `_meta` keys only in-process platform extensions may set. They are
+    /// removed from other extensions' results, so an external server cannot trigger
+    /// host behavior keyed on them.
+    fn reserved_result_meta_keys(&self) -> &'static [&'static str] {
+        &[]
     }
+
+    /// Whether a lease's catalog includes `tool` (its server name) from the extension
+    /// keyed `extension`. `catalog_has_resources` is whether any extension in the
+    /// lease supports MCP resources.
+    fn exposes_tool(&self, _extension: &str, _tool: &str, _catalog_has_resources: bool) -> bool {
+        true
+    }
+
+    /// Sanitize and decorate a tool result before it leaves the runtime. Applies to
+    /// all results, including in-process extensions; defaults to no decoration.
+    async fn process_result(&self, _context: ResultContext<'_>, _result: &mut CallToolResult) {}
 
     fn action_required(&self) -> Arc<ActionRequiredManager>;
 

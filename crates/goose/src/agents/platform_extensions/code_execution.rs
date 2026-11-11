@@ -201,17 +201,22 @@ fn dispatch_tool(
                     )
                     .await;
                 match dispatch_result {
-                    Ok(dispatch_result) => match manager
-                        .applying_mutation(dispatch_result, &ctx.session_id)
+                    Ok(dispatch_result) => {
+                        match crate::agents::extension_manager::applying_mutation(
+                            &manager,
+                            dispatch_result,
+                            &ctx.session_id,
+                        )
                         .result
                         .await
-                    {
-                        Ok(result) if result.is_error == Some(true) => {
-                            Err(callback_result_to_value(&result).to_string())
+                        {
+                            Ok(result) if result.is_error == Some(true) => {
+                                Err(callback_result_to_value(&result).to_string())
+                            }
+                            Ok(result) => Ok(callback_result_to_value(&result)),
+                            Err(e) => Err(format!("Tool error: {}", e.message)),
                         }
-                        Ok(result) => Ok(callback_result_to_value(&result)),
-                        Err(e) => Err(format!("Tool error: {}", e.message)),
-                    },
+                    }
                     Err(e) => Err(format!("Dispatch error: {e}")),
                 }
             };
